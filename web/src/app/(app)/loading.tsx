@@ -1,0 +1,3 @@
+export default function AppLoading() {
+	return <div className="page" aria-live="polite" aria-busy="true"><div className="mb-5 h-8 w-48 animate-pulse rounded bg-[#dfe5e1]" /><div className="kpi-grid">{Array.from({ length: 6 }, (_, index) => <div className="kpi-cell" key={index}><div className="h-3 w-20 animate-pulse rounded bg-[#dfe5e1]" /><div className="mt-3 h-6 w-24 animate-pulse rounded bg-[#dfe5e1]" /></div>)}</div><div className="mt-5 h-80 animate-pulse rounded-lg border border-[#d7dfda] bg-white" /></div>;
+}
