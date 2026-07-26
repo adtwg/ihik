@@ -214,7 +214,7 @@ setup_runtime() {
 
 sanitize_process_environment() {
   unset POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD POSTGRES_APP_USER POSTGRES_APP_PASSWORD
-  unset DATABASE_URL DATABASE_RUNTIME_USER BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD
+  unset DATABASE_URL DATABASE_RUNTIME_USER BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD APP_ENCRYPTION_KEY
   unset COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH
   export DOCKER_HOST=unix:///var/run/docker.sock
   export -n APP_DOMAIN ACME_EMAIL ADMIN_USERNAME ADMIN_PASSWORD 2>/dev/null || true
@@ -338,7 +338,7 @@ load_existing_environment() {
   [[ -f "$ENV_FILE" ]] || return 0
   [[ "$INSTALL_STATE_LOADED" == true ]] || fatal ".env ada tanpa installer-state; hentikan dan lakukan recovery/adopsi legacy secara manual"
   EXISTING_ENV=true
-  local mode env_owner env_domain env_email owner_password app_password owner_user app_user database actual_keys expected_keys
+  local mode env_owner env_domain env_email owner_password app_password owner_user app_user database actual_keys expected_keys legacy_keys encryption_key
   mode=$(stat -c '%a' "$ENV_FILE")
   [[ "$mode" == "600" ]] || fatal ".env harus memiliki mode 600, saat ini $mode"
   env_owner=$(stat -c '%U' "$ENV_FILE")
@@ -348,7 +348,23 @@ load_existing_environment() {
     fatal ".env hanya boleh berisi KEY=value tanpa spasi, komentar, atau baris kosong"
   fi
   actual_keys=$(cut -d= -f1 "$ENV_FILE" | sort)
-  expected_keys=$'ACME_EMAIL\nAPP_DOMAIN\nPOSTGRES_APP_PASSWORD\nPOSTGRES_APP_USER\nPOSTGRES_DB\nPOSTGRES_PASSWORD\nPOSTGRES_USER'
+  legacy_keys=$'ACME_EMAIL\nAPP_DOMAIN\nPOSTGRES_APP_PASSWORD\nPOSTGRES_APP_USER\nPOSTGRES_DB\nPOSTGRES_PASSWORD\nPOSTGRES_USER'
+  expected_keys=$'ACME_EMAIL\nAPP_DOMAIN\nAPP_ENCRYPTION_KEY\nPOSTGRES_APP_PASSWORD\nPOSTGRES_APP_USER\nPOSTGRES_DB\nPOSTGRES_PASSWORD\nPOSTGRES_USER'
+  if [[ "$actual_keys" == "$legacy_keys" ]]; then
+    # Instalasi lama tanpa kunci enkripsi: tambahkan sekali secara atomik.
+    local upgrade_temp encryption_key_new
+    encryption_key_new=$(openssl rand -hex 32)
+    upgrade_temp=$(mktemp "$APP_DIR/.env.tmp.XXXXXX")
+    TEMP_FILES+=("$upgrade_temp")
+    cat "$ENV_FILE" >"$upgrade_temp"
+    printf 'APP_ENCRYPTION_KEY=%s\n' "$encryption_key_new" >>"$upgrade_temp"
+    chown "$DEPLOY_USER:$DEPLOY_USER" "$upgrade_temp"
+    chmod 0600 "$upgrade_temp"
+    mv -f -- "$upgrade_temp" "$ENV_FILE"
+    encryption_key_new=""
+    actual_keys=$(cut -d= -f1 "$ENV_FILE" | sort)
+    ui "APP_ENCRYPTION_KEY ditambahkan ke .env (upgrade dari instalasi lama)."
+  fi
   [[ "$actual_keys" == "$expected_keys" ]] || fatal ".env memiliki key tambahan, hilang, atau duplikat"
   env_domain=$(read_env_value APP_DOMAIN)
   env_email=$(read_env_value ACME_EMAIL)
@@ -357,12 +373,14 @@ load_existing_environment() {
   owner_password=$(read_env_value POSTGRES_PASSWORD)
   app_user=$(read_env_value POSTGRES_APP_USER)
   app_password=$(read_env_value POSTGRES_APP_PASSWORD)
+  encryption_key=$(read_env_value APP_ENCRYPTION_KEY)
 
   [[ "$database" == "isp_billing" ]] || fatal "POSTGRES_DB pada .env tidak dikenali"
   [[ "$owner_user" == "isp_billing_owner" ]] || fatal "POSTGRES_USER pada .env tidak dikenali"
   [[ "$app_user" == "isp_billing_app" ]] || fatal "POSTGRES_APP_USER pada .env tidak dikenali"
   [[ "$owner_password" =~ ^[a-f0-9]{64}$ ]] || fatal "POSTGRES_PASSWORD pada .env tidak valid"
   [[ "$app_password" =~ ^[a-f0-9]{64}$ ]] || fatal "POSTGRES_APP_PASSWORD pada .env tidak valid"
+  [[ "$encryption_key" =~ ^[a-f0-9]{64}$ ]] || fatal "APP_ENCRYPTION_KEY pada .env tidak valid"
   [[ "$owner_password" != "$app_password" ]] || fatal "password database owner dan runtime harus berbeda"
 
   if [[ -n "$APP_DOMAIN" && "$APP_DOMAIN" != "$env_domain" ]]; then
@@ -1051,9 +1069,10 @@ create_or_validate_environment() {
   elif [[ "$EMPTY_UNINITIALIZED_VOLUME" == true ]]; then
     fatal "volume PostgreSQL kosong dari instalasi terputus hilang sebelum .env dibuat"
   fi
-  local owner_password app_password temporary
+  local owner_password app_password encryption_key temporary
   owner_password=$(openssl rand -hex 32)
   app_password=$(openssl rand -hex 32)
+  encryption_key=$(openssl rand -hex 32)
   [[ "$owner_password" != "$app_password" ]] || fatal "generator menghasilkan password database yang sama"
   temporary=$(mktemp "$APP_DIR/.env.tmp.XXXXXX")
   TEMP_FILES+=("$temporary")
@@ -1065,12 +1084,14 @@ POSTGRES_USER=isp_billing_owner
 POSTGRES_PASSWORD=$owner_password
 POSTGRES_APP_USER=isp_billing_app
 POSTGRES_APP_PASSWORD=$app_password
+APP_ENCRYPTION_KEY=$encryption_key
 EOF
   chown "$DEPLOY_USER:$DEPLOY_USER" "$temporary"
   chmod 0600 "$temporary"
   mv -f -- "$temporary" "$ENV_FILE"
   owner_password=""
   app_password=""
+  encryption_key=""
   EXISTING_ENV=true
 }
 

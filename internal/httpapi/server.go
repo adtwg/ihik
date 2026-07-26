@@ -20,6 +20,7 @@ import (
 	"isp-billing/internal/plan"
 	"isp-billing/internal/platform"
 	"isp-billing/internal/report"
+	"isp-billing/internal/router"
 	"isp-billing/internal/subscription"
 )
 
@@ -42,6 +43,7 @@ type server struct {
 	payments      *payment.Service
 	platform      *platform.Service
 	reports       *report.Service
+	router        *router.Service
 	readiness     func(context.Context) error
 	cookieSecure  bool
 }
@@ -56,6 +58,7 @@ type Dependencies struct {
 	Payments      *payment.Service
 	Platform      *platform.Service
 	Reports       *report.Service
+	Router        *router.Service
 	Readiness     func(context.Context) error
 	CookieSecure  bool
 }
@@ -71,6 +74,7 @@ func NewHandler(deps Dependencies) http.Handler {
 		payments:      deps.Payments,
 		platform:      deps.Platform,
 		reports:       deps.Reports,
+		router:        deps.Router,
 		readiness:     deps.Readiness,
 		cookieSecure:  deps.CookieSecure,
 	}
@@ -83,7 +87,13 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/customers", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.listCustomers))))
 	mux.Handle("POST /api/v1/customers", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.createCustomer)))))
 	mux.Handle("POST /api/v1/customers/{customerID}/archive", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.archiveCustomer)))))
+	mux.Handle("POST /api/v1/customers/sync-pppoe", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.syncPPPoE)))))
+	mux.Handle("GET /api/v1/customers/{customerID}/connection", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.checkCustomerConnection))))
 	mux.Handle("GET /api/v1/dashboard", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.mitraDashboard))))
+
+	mux.Handle("GET /api/v1/router", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.getRouter))))
+	mux.Handle("PUT /api/v1/router", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.saveRouter)))))
+	mux.Handle("POST /api/v1/router/test", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.testRouter)))))
 
 	mux.Handle("GET /api/v1/plans", api.authenticate(api.authorize(auth.PermissionPackageManage, http.HandlerFunc(api.listPlans))))
 	mux.Handle("POST /api/v1/plans", api.authenticate(api.authorize(auth.PermissionPackageManage, api.requireCSRF(http.HandlerFunc(api.createPlan)))))
@@ -214,6 +224,7 @@ func (server *server) listCustomers(response http.ResponseWriter, request *http.
 		Search:          queryValues.Get("search"),
 		Sort:            queryValues.Get("sort"),
 		Order:           queryValues.Get("order"),
+		Status:          queryValues.Get("status"),
 		IncludeArchived: queryValues.Get("archived") == "include",
 	})
 	if err != nil {

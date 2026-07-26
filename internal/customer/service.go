@@ -20,6 +20,7 @@ func (service *Service) Create(ctx context.Context, tenantID string, input Creat
 	input.Phone = strings.TrimSpace(input.Phone)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Address = strings.TrimSpace(input.Address)
+	input.PackageID = strings.TrimSpace(input.PackageID)
 	if tenantID == "" || input.Name == "" || len(input.Name) > 200 || len(input.Phone) > 50 || len(input.Email) > 320 || len(input.Address) > 2_000 {
 		return Customer{}, ErrInvalidInput
 	}
@@ -46,6 +47,11 @@ func (service *Service) List(ctx context.Context, tenantID string, query ListQue
 	}
 	query.Search = strings.TrimSpace(query.Search)
 	if len(query.Search) > 200 {
+		return PageResult{}, ErrInvalidInput
+	}
+
+	allowedStatus := map[string]bool{"": true, "active": true, "isolated": true, "no_service": true, "unpaid": true}
+	if !allowedStatus[query.Status] {
 		return PageResult{}, ErrInvalidInput
 	}
 

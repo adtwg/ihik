@@ -23,6 +23,7 @@ import (
 	"isp-billing/internal/platform"
 	"isp-billing/internal/postgres"
 	"isp-billing/internal/report"
+	"isp-billing/internal/router"
 	"isp-billing/internal/subscription"
 )
 
@@ -60,6 +61,7 @@ func main() {
 	paymentService := payment.NewService(postgres.NewPaymentRepository(pool))
 	platformService := platform.NewService(postgres.NewPlatformRepository(pool))
 	reportService := report.NewService(postgres.NewReportRepository(pool))
+	routerService := router.NewService(postgres.NewRouterRepository(pool), applicationConfig.EncryptionKey)
 
 	server := &http.Server{
 		Addr: applicationConfig.Address,
@@ -73,6 +75,7 @@ func main() {
 			Payments:      paymentService,
 			Platform:      platformService,
 			Reports:       reportService,
+			Router:        routerService,
 			Readiness:     pool.Ping,
 			CookieSecure:  applicationConfig.CookieSecure,
 		}),

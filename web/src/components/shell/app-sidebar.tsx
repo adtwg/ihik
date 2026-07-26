@@ -3,17 +3,17 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, FileText, Gauge, Network, PanelLeftClose, PanelLeftOpen, Users, Wallet, X } from "lucide-react";
+import { BarChart3, Boxes, Building2, FileText, Gauge, PanelLeftClose, PanelLeftOpen, Router, Users, Wallet, X } from "lucide-react";
 import type { Role } from "@/lib/api/types";
 
 const mitraNavigation = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
   { href: "/pelanggan", label: "Pelanggan", icon: Users },
   { href: "/paket", label: "Paket", icon: Boxes },
-  { href: "/layanan", label: "Layanan", icon: Network },
   { href: "/tagihan", label: "Tagihan", icon: FileText },
   { href: "/pembayaran", label: "Pembayaran", icon: Wallet },
   { href: "/laporan", label: "Laporan", icon: BarChart3 },
+  { href: "/router", label: "Router", icon: Router },
 ];
 
 const platformNavigation = [

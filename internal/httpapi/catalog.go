@@ -183,23 +183,42 @@ func (server *server) createSubscription(response http.ResponseWriter, request *
 }
 
 func (server *server) isolateSubscription(response http.ResponseWriter, request *http.Request) {
-	server.subscriptionTransition(response, request, server.subscriptions.Isolate)
-}
-
-func (server *server) restoreSubscription(response http.ResponseWriter, request *http.Request) {
-	server.subscriptionTransition(response, request, server.subscriptions.Restore)
-}
-
-func (server *server) archiveSubscription(response http.ResponseWriter, request *http.Request) {
-	server.subscriptionTransition(response, request, server.subscriptions.Archive)
-}
-
-func (server *server) subscriptionTransition(response http.ResponseWriter, request *http.Request, action func(ctx context.Context, tenantID, subscriptionID string) error) {
 	tenantID, ok := server.tenantID(response, request)
 	if !ok {
 		return
 	}
-	if err := action(request.Context(), tenantID, request.PathValue("serviceID")); err != nil {
+	serviceID := request.PathValue("serviceID")
+	// Putus akses di router dulu; jika router bermasalah, jangan ubah status billing.
+	if err := server.router.SetSecretDisabled(request.Context(), tenantID, serviceID, true); err != nil {
+		routerErrorResponse(response, err)
+		return
+	}
+	server.finishSubscriptionTransition(response, request, tenantID, serviceID, server.subscriptions.Isolate)
+}
+
+func (server *server) restoreSubscription(response http.ResponseWriter, request *http.Request) {
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
+		return
+	}
+	serviceID := request.PathValue("serviceID")
+	if err := server.router.SetSecretDisabled(request.Context(), tenantID, serviceID, false); err != nil {
+		routerErrorResponse(response, err)
+		return
+	}
+	server.finishSubscriptionTransition(response, request, tenantID, serviceID, server.subscriptions.Restore)
+}
+
+func (server *server) archiveSubscription(response http.ResponseWriter, request *http.Request) {
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
+		return
+	}
+	server.finishSubscriptionTransition(response, request, tenantID, request.PathValue("serviceID"), server.subscriptions.Archive)
+}
+
+func (server *server) finishSubscriptionTransition(response http.ResponseWriter, request *http.Request, tenantID, subscriptionID string, action func(ctx context.Context, tenantID, subscriptionID string) error) {
+	if err := action(request.Context(), tenantID, subscriptionID); err != nil {
 		switch {
 		case errors.Is(err, subscription.ErrNotFound):
 			writeError(response, http.StatusNotFound, "not_found", "Layanan tidak ditemukan.")

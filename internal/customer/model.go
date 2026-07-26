@@ -20,13 +20,27 @@ type Customer struct {
 	Address        string     `json:"address,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ArchivedAt     *time.Time `json:"archived_at,omitempty"`
+
+	// Ringkasan layanan & tagihan (diisi saat listing).
+	ServiceID      string `json:"service_id,omitempty"`
+	ServiceNumber  string `json:"service_number,omitempty"`
+	ServiceStatus  string `json:"service_status,omitempty"`
+	PackageID      string `json:"package_id,omitempty"`
+	PackageName    string `json:"package_name,omitempty"`
+	PackagePrice   string `json:"package_price,omitempty"`
+	PPPoEUsername  string `json:"pppoe_username,omitempty"`
+	OpenInvoices   int64  `json:"open_invoices"`
+	Outstanding    string `json:"outstanding"`
+	LastInvoice    string `json:"last_invoice_number,omitempty"`
+	LastInvoiceDue string `json:"last_invoice_status,omitempty"`
 }
 
 type CreateInput struct {
-	Name    string `json:"name"`
-	Phone   string `json:"phone"`
-	Email   string `json:"email"`
-	Address string `json:"address"`
+	Name      string `json:"name"`
+	Phone     string `json:"phone"`
+	Email     string `json:"email"`
+	Address   string `json:"address"`
+	PackageID string `json:"package_id"`
 }
 
 type ListQuery struct {
@@ -35,6 +49,7 @@ type ListQuery struct {
 	Search          string
 	Sort            string
 	Order           string
+	Status          string
 	IncludeArchived bool
 }
 
