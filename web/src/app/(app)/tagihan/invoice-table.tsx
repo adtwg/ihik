@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Ban, ChevronLeft, ChevronRight, Eye, FilePlus2, HandCoins, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Ban, ChevronLeft, ChevronRight, Eye, FilePlus2, HandCoins, Printer, Search, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { clientAPI } from "@/lib/api/client";
 import { formatIDR, formatDate } from "@/lib/format";
@@ -93,6 +93,7 @@ export function InvoiceTable({ data }: { data: InvoicePage }) {
               <td>{statusBadge(invoice.status)}</td>
               <td className="w-32"><div className="flex gap-1">
                 <button className="icon-button" title="Lihat rincian" aria-label={`Rincian ${invoice.invoice_number}`} onClick={() => setDetailTarget(invoice)}><Eye size={17} /></button>
+                <button className="icon-button" title="Cetak tagihan" aria-label={`Cetak ${invoice.invoice_number}`} onClick={() => window.open(`/tagihan/${invoice.id}/cetak`, "_blank", "noopener")}><Printer size={17} /></button>
                 {payable(invoice) && <button className="icon-button" title="Terima pembayaran" aria-label={`Bayar ${invoice.invoice_number}`} onClick={() => setPayTarget(invoice)}><HandCoins size={17} /></button>}
                 {payable(invoice) && Number(invoice.paid_amount) === 0 && <button className="icon-button" title="Batalkan tagihan" aria-label={`Batalkan ${invoice.invoice_number}`} onClick={() => voidInvoice(invoice)}><Ban size={17} /></button>}
               </div></td>
@@ -231,6 +232,9 @@ function InvoiceDetailModal({ invoice, onClose }: { invoice: Invoice; onClose: (
         </div>}
       </div>}
     </div>
-    <footer className="modal-footer"><button type="button" className="primary-button" onClick={onClose}>Tutup</button></footer>
+    <footer className="modal-footer">
+      <button type="button" className="secondary-button" onClick={() => window.open(`/tagihan/${invoice.id}/cetak`, "_blank", "noopener")}><Printer size={16} /> Cetak</button>
+      <button type="button" className="primary-button" onClick={onClose}>Tutup</button>
+    </footer>
   </div></div>;
 }

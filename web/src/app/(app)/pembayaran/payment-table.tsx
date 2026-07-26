@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Ban, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Ban, ChevronLeft, ChevronRight, Printer, Search, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { clientAPI } from "@/lib/api/client";
 import { formatIDR, formatDateTime } from "@/lib/format";
@@ -64,7 +64,10 @@ export function PaymentTable({ data }: { data: PaymentPage }) {
               <td><div>{payment.customer_name}</div><div className="text-xs text-[#607067]">{payment.customer_number}</div></td>
               <td>{payment.method === "cash" ? "Tunai" : "Transfer"}</td>
               <td><span className={`status-badge ${payment.status === "voided" ? "archived" : ""}`}>{payment.status === "voided" ? "Dibatalkan" : "Tercatat"}</span></td>
-              <td className="w-14">{payment.status === "posted" && <button className="icon-button" title="Batalkan pembayaran" aria-label={`Batalkan ${payment.payment_number}`} onClick={() => setVoidTarget(payment)}><Ban size={17} /></button>}</td>
+              <td className="w-24"><div className="flex gap-1">
+                <button className="icon-button" title="Cetak kuitansi" aria-label={`Cetak ${payment.receipt_number}`} onClick={() => window.open(`/pembayaran/${payment.id}/cetak`, "_blank", "noopener")}><Printer size={17} /></button>
+                {payment.status === "posted" && <button className="icon-button" title="Batalkan pembayaran" aria-label={`Batalkan ${payment.payment_number}`} onClick={() => setVoidTarget(payment)}><Ban size={17} /></button>}
+              </div></td>
             </tr>)}</tbody>
           </table>
         </div>

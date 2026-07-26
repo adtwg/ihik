@@ -19,6 +19,7 @@ import (
 	"isp-billing/internal/payment"
 	"isp-billing/internal/plan"
 	"isp-billing/internal/platform"
+	"isp-billing/internal/report"
 	"isp-billing/internal/subscription"
 )
 
@@ -40,6 +41,7 @@ type server struct {
 	billing       *billing.Service
 	payments      *payment.Service
 	platform      *platform.Service
+	reports       *report.Service
 	readiness     func(context.Context) error
 	cookieSecure  bool
 }
@@ -53,6 +55,7 @@ type Dependencies struct {
 	Billing       *billing.Service
 	Payments      *payment.Service
 	Platform      *platform.Service
+	Reports       *report.Service
 	Readiness     func(context.Context) error
 	CookieSecure  bool
 }
@@ -67,6 +70,7 @@ func NewHandler(deps Dependencies) http.Handler {
 		billing:       deps.Billing,
 		payments:      deps.Payments,
 		platform:      deps.Platform,
+		reports:       deps.Reports,
 		readiness:     deps.Readiness,
 		cookieSecure:  deps.CookieSecure,
 	}
@@ -98,8 +102,11 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.Handle("POST /api/v1/invoices/{invoiceID}/void", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.voidInvoice)))))
 
 	mux.Handle("GET /api/v1/payments", api.authenticate(api.authorize(auth.PermissionBillingManage, http.HandlerFunc(api.listPayments))))
+	mux.Handle("GET /api/v1/payments/{paymentID}", api.authenticate(api.authorize(auth.PermissionBillingManage, http.HandlerFunc(api.getPayment))))
 	mux.Handle("POST /api/v1/payments", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.createPayment)))))
 	mux.Handle("POST /api/v1/payments/{paymentID}/void", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.voidPayment)))))
+
+	mux.Handle("GET /api/v1/reports/financial", api.authenticate(api.authorize(auth.PermissionFinanceRead, http.HandlerFunc(api.financialReport))))
 
 	mux.Handle("GET /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, http.HandlerFunc(api.listTenants))))
 	mux.Handle("POST /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, api.requireCSRF(http.HandlerFunc(api.createTenant)))))

@@ -134,6 +134,23 @@ func (server *server) listPayments(response http.ResponseWriter, request *http.R
 	writeJSON(response, http.StatusOK, result)
 }
 
+func (server *server) getPayment(response http.ResponseWriter, request *http.Request) {
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
+		return
+	}
+	found, err := server.payments.Get(request.Context(), tenantID, request.PathValue("paymentID"))
+	if err != nil {
+		if errors.Is(err, payment.ErrNotFound) {
+			writeError(response, http.StatusNotFound, "not_found", "Pembayaran tidak ditemukan.")
+			return
+		}
+		writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")
+		return
+	}
+	writeJSON(response, http.StatusOK, found)
+}
+
 func (server *server) createPayment(response http.ResponseWriter, request *http.Request) {
 	tenantID, ok := server.tenantID(response, request)
 	if !ok {

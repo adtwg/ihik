@@ -63,6 +63,7 @@ type PageResult struct {
 
 type Repository interface {
 	Create(ctx context.Context, tenantID, receivedBy string, input CreateInput) (Payment, error)
+	Get(ctx context.Context, tenantID, paymentID string) (Payment, error)
 	List(ctx context.Context, tenantID string, query ListQuery) (PageResult, error)
 	Void(ctx context.Context, tenantID, voidedBy, paymentID, reason string) error
 }

@@ -179,6 +179,22 @@ func recomputeInvoiceStatus(ctx context.Context, tx pgx.Tx, tenantID, invoiceID 
 	return err
 }
 
+func (repository *PaymentRepository) Get(ctx context.Context, tenantID, paymentID string) (payment.Payment, error) {
+	found, err := scanPayment(repository.pool.QueryRow(ctx, `
+		SELECT `+paymentSelectColumns+`
+		FROM payments pay
+		`+paymentJoins+`
+		WHERE pay.tenant_id = $1 AND pay.id = $2
+	`, tenantID, paymentID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
+			return payment.Payment{}, payment.ErrNotFound
+		}
+		return payment.Payment{}, err
+	}
+	return found, nil
+}
+
 func (repository *PaymentRepository) List(ctx context.Context, tenantID string, query payment.ListQuery) (payment.PageResult, error) {
 	sortColumns := map[string]string{
 		"payment_number": "pay.payment_number",

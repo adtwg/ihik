@@ -156,6 +156,34 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .status-badge.warning { background: #fdf3dc; color: #8a6a10; }
 .status-badge.danger { background: #fdecec; color: #b3261e; }
 .status-badge.info { background: #e8f0fd; color: #1a56b0; }
+
+/* Halaman cetak (tagihan & kuitansi) */
+.print-page { min-height: 100vh; background: #f2f4f3; padding: 24px 16px; }
+.print-sheet { margin: 0 auto; max-width: 720px; background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(23, 32, 28, 0.08); padding: 40px; }
+.print-sheet.receipt { max-width: 520px; }
+.print-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 24px; }
+.print-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 3px solid #096b4c; padding-bottom: 16px; }
+.print-brand { font-size: 22px; font-weight: 900; color: #096b4c; }
+.print-title { font-size: 26px; font-weight: 900; letter-spacing: 2px; color: #17201c; }
+.print-status { display: inline-block; margin-top: 6px; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 800; }
+.print-status.paid { background: #edf7f2; color: #096b4c; }
+.print-status.open { background: #fdf3dc; color: #8a6a10; }
+.print-status.void { background: #fdecec; color: #b3261e; }
+.print-meta { display: flex; justify-content: space-between; gap: 16px; padding: 20px 0; font-size: 14px; }
+.print-meta h2 { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #607067; margin-bottom: 4px; }
+.print-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.print-table th { text-align: left; background: #f4f7f5; padding: 10px 12px; font-size: 12px; text-transform: uppercase; color: #607067; }
+.print-table td { padding: 10px 12px; border-bottom: 1px solid #eef1ef; }
+.print-table tfoot td { border-bottom: none; padding: 6px 12px; }
+.print-table .print-total td { font-weight: 900; font-size: 15px; border-top: 2px solid #17201c; }
+.print-footer { margin-top: 32px; border-top: 1px solid #eef1ef; padding-top: 12px; font-size: 12px; color: #607067; text-align: center; }
+
+@media print {
+  .no-print { display: none !important; }
+  .print-page { background: #fff; padding: 0; }
+  .print-sheet { box-shadow: none; border-radius: 0; max-width: none; padding: 0; }
+  @page { margin: 16mm; }
+}
 .table-footer { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 8px 12px; color: var(--ink-muted); font-size: 13px; }
 .pagination { display: flex; align-items: center; gap: 6px; }
 .mobile-records { display: none; }

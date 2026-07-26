@@ -37,6 +37,20 @@ func (service *Service) Create(ctx context.Context, tenantID, receivedBy string,
 	return created, nil
 }
 
+func (service *Service) Get(ctx context.Context, tenantID, paymentID string) (Payment, error) {
+	if tenantID == "" || strings.TrimSpace(paymentID) == "" {
+		return Payment{}, ErrInvalidInput
+	}
+	found, err := service.repository.Get(ctx, tenantID, paymentID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Payment{}, ErrNotFound
+		}
+		return Payment{}, fmt.Errorf("get payment: %w", err)
+	}
+	return found, nil
+}
+
 func (service *Service) List(ctx context.Context, tenantID string, query ListQuery) (PageResult, error) {
 	if tenantID == "" {
 		return PageResult{}, ErrInvalidInput
