@@ -182,16 +182,16 @@ func ensureRuntimeRole(ctx context.Context, connection *pgxpool.Conn, runtimeUse
 	var statement string
 	if err := connection.QueryRow(ctx, `
 		SELECT CASE
-			WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)
+			WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1::text)
 			THEN format(
 				'ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
-				$1,
-				$2
+				$1::text,
+				$2::text
 			)
 			ELSE format(
 				'CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
-				$1,
-				$2
+				$1::text,
+				$2::text
 			)
 		END
 	`, runtimeUser, runtimePassword).Scan(&statement); err != nil {
