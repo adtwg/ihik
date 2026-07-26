@@ -153,6 +153,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .sort-button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 0; font-weight: 700; cursor: pointer; }
 .status-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; background: #edf7f2; color: var(--success); padding: 4px 8px; font-size: 12px; font-weight: 700; }
 .status-badge.archived { background: #f2f3f2; color: #66736c; }
+.status-badge.warning { background: #fdf3dc; color: #8a6a10; }
+.status-badge.danger { background: #fdecec; color: #b3261e; }
+.status-badge.info { background: #e8f0fd; color: #1a56b0; }
 .table-footer { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 8px 12px; color: var(--ink-muted); font-size: 13px; }
 .pagination { display: flex; align-items: center; gap: 6px; }
 .mobile-records { display: none; }

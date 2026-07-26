@@ -13,8 +13,13 @@ import (
 	"time"
 
 	"isp-billing/internal/auth"
+	"isp-billing/internal/billing"
 	"isp-billing/internal/customer"
 	"isp-billing/internal/dashboard"
+	"isp-billing/internal/payment"
+	"isp-billing/internal/plan"
+	"isp-billing/internal/platform"
+	"isp-billing/internal/subscription"
 )
 
 const (
@@ -27,15 +32,44 @@ type contextKey string
 const principalContextKey contextKey = "principal"
 
 type server struct {
-	auth         *auth.Service
-	customers    *customer.Service
-	dashboard    *dashboard.Service
-	readiness    func(context.Context) error
-	cookieSecure bool
+	auth          *auth.Service
+	customers     *customer.Service
+	dashboard     *dashboard.Service
+	plans         *plan.Service
+	subscriptions *subscription.Service
+	billing       *billing.Service
+	payments      *payment.Service
+	platform      *platform.Service
+	readiness     func(context.Context) error
+	cookieSecure  bool
 }
 
-func NewHandler(authService *auth.Service, customerService *customer.Service, dashboardService *dashboard.Service, readiness func(context.Context) error, cookieSecure bool) http.Handler {
-	api := &server{auth: authService, customers: customerService, dashboard: dashboardService, readiness: readiness, cookieSecure: cookieSecure}
+type Dependencies struct {
+	Auth          *auth.Service
+	Customers     *customer.Service
+	Dashboard     *dashboard.Service
+	Plans         *plan.Service
+	Subscriptions *subscription.Service
+	Billing       *billing.Service
+	Payments      *payment.Service
+	Platform      *platform.Service
+	Readiness     func(context.Context) error
+	CookieSecure  bool
+}
+
+func NewHandler(deps Dependencies) http.Handler {
+	api := &server{
+		auth:          deps.Auth,
+		customers:     deps.Customers,
+		dashboard:     deps.Dashboard,
+		plans:         deps.Plans,
+		subscriptions: deps.Subscriptions,
+		billing:       deps.Billing,
+		payments:      deps.Payments,
+		platform:      deps.Platform,
+		readiness:     deps.Readiness,
+		cookieSecure:  deps.CookieSecure,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.health)
 	mux.HandleFunc("GET /ready", api.ready)
@@ -46,6 +80,30 @@ func NewHandler(authService *auth.Service, customerService *customer.Service, da
 	mux.Handle("POST /api/v1/customers", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.createCustomer)))))
 	mux.Handle("POST /api/v1/customers/{customerID}/archive", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.archiveCustomer)))))
 	mux.Handle("GET /api/v1/dashboard", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.mitraDashboard))))
+
+	mux.Handle("GET /api/v1/plans", api.authenticate(api.authorize(auth.PermissionPackageManage, http.HandlerFunc(api.listPlans))))
+	mux.Handle("POST /api/v1/plans", api.authenticate(api.authorize(auth.PermissionPackageManage, api.requireCSRF(http.HandlerFunc(api.createPlan)))))
+	mux.Handle("PUT /api/v1/plans/{planID}", api.authenticate(api.authorize(auth.PermissionPackageManage, api.requireCSRF(http.HandlerFunc(api.updatePlan)))))
+	mux.Handle("POST /api/v1/plans/{planID}/archive", api.authenticate(api.authorize(auth.PermissionPackageManage, api.requireCSRF(http.HandlerFunc(api.archivePlan)))))
+
+	mux.Handle("GET /api/v1/services", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.listSubscriptions))))
+	mux.Handle("POST /api/v1/services", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.createSubscription)))))
+	mux.Handle("POST /api/v1/services/{serviceID}/isolate", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.isolateSubscription)))))
+	mux.Handle("POST /api/v1/services/{serviceID}/restore", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.restoreSubscription)))))
+	mux.Handle("POST /api/v1/services/{serviceID}/archive", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.archiveSubscription)))))
+
+	mux.Handle("GET /api/v1/invoices", api.authenticate(api.authorize(auth.PermissionBillingManage, http.HandlerFunc(api.listInvoices))))
+	mux.Handle("POST /api/v1/invoices/generate", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.generateInvoices)))))
+	mux.Handle("GET /api/v1/invoices/{invoiceID}", api.authenticate(api.authorize(auth.PermissionBillingManage, http.HandlerFunc(api.getInvoice))))
+	mux.Handle("POST /api/v1/invoices/{invoiceID}/void", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.voidInvoice)))))
+
+	mux.Handle("GET /api/v1/payments", api.authenticate(api.authorize(auth.PermissionBillingManage, http.HandlerFunc(api.listPayments))))
+	mux.Handle("POST /api/v1/payments", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.createPayment)))))
+	mux.Handle("POST /api/v1/payments/{paymentID}/void", api.authenticate(api.authorize(auth.PermissionBillingManage, api.requireCSRF(http.HandlerFunc(api.voidPayment)))))
+
+	mux.Handle("GET /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, http.HandlerFunc(api.listTenants))))
+	mux.Handle("POST /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, api.requireCSRF(http.HandlerFunc(api.createTenant)))))
+	mux.Handle("POST /api/v1/platform/tenants/{tenantID}/active", api.authenticate(api.authorize(auth.PermissionPlatformManage, api.requireCSRF(http.HandlerFunc(api.setTenantActive)))))
 	return securityHeaders(mux)
 }
 

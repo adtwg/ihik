@@ -3,16 +3,21 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Gauge, PanelLeftClose, PanelLeftOpen, Users, X } from "lucide-react";
+import { Boxes, Building2, FileText, Gauge, Network, PanelLeftClose, PanelLeftOpen, Users, Wallet, X } from "lucide-react";
 import type { Role } from "@/lib/api/types";
 
 const mitraNavigation = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
   { href: "/pelanggan", label: "Pelanggan", icon: Users },
+  { href: "/paket", label: "Paket", icon: Boxes },
+  { href: "/layanan", label: "Layanan", icon: Network },
+  { href: "/tagihan", label: "Tagihan", icon: FileText },
+  { href: "/pembayaran", label: "Pembayaran", icon: Wallet },
 ];
 
 const platformNavigation = [
 	{ href: "/platform", label: "Platform", icon: Gauge },
+	{ href: "/platform/mitra", label: "Mitra", icon: Building2 },
 ];
 
 export function AppSidebar({ role, collapsed, mobileOpen, onCollapse, onMobileClose }: { role: Role; collapsed: boolean; mobileOpen: boolean; onCollapse: () => void; onMobileClose: () => void }) {
@@ -44,7 +49,7 @@ export function AppSidebar({ role, collapsed, mobileOpen, onCollapse, onMobileCl
   }, [mobileOpen, onMobileClose]);
   const links = navigation.map((item) => {
     const Icon = item.icon;
-    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+    const active = item.href === "/platform" ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
     return (
       <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined} onClick={onMobileClose} className={`flex h-11 items-center gap-3 rounded-md px-3 text-sm font-semibold transition-colors ${active ? "bg-white text-[#10251d]" : "text-[#dbe7e1] hover:bg-white/10"}`}>
         <Icon size={20} className="shrink-0" /><span className={collapsed ? "sr-only" : "truncate"}>{item.label}</span>

@@ -13,11 +13,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"isp-billing/internal/auth"
+	"isp-billing/internal/billing"
 	"isp-billing/internal/config"
 	"isp-billing/internal/customer"
 	"isp-billing/internal/dashboard"
 	"isp-billing/internal/httpapi"
+	"isp-billing/internal/payment"
+	"isp-billing/internal/plan"
+	"isp-billing/internal/platform"
 	"isp-billing/internal/postgres"
+	"isp-billing/internal/subscription"
 )
 
 func main() {
@@ -48,10 +53,26 @@ func main() {
 	}
 	customerService := customer.NewService(postgres.NewCustomerRepository(pool))
 	dashboardService := dashboard.NewService(postgres.NewDashboardRepository(pool))
+	planService := plan.NewService(postgres.NewPlanRepository(pool))
+	subscriptionService := subscription.NewService(postgres.NewSubscriptionRepository(pool))
+	billingService := billing.NewService(postgres.NewBillingRepository(pool))
+	paymentService := payment.NewService(postgres.NewPaymentRepository(pool))
+	platformService := platform.NewService(postgres.NewPlatformRepository(pool))
 
 	server := &http.Server{
-		Addr:              applicationConfig.Address,
-		Handler:           httpapi.NewHandler(authService, customerService, dashboardService, pool.Ping, applicationConfig.CookieSecure),
+		Addr: applicationConfig.Address,
+		Handler: httpapi.NewHandler(httpapi.Dependencies{
+			Auth:          authService,
+			Customers:     customerService,
+			Dashboard:     dashboardService,
+			Plans:         planService,
+			Subscriptions: subscriptionService,
+			Billing:       billingService,
+			Payments:      paymentService,
+			Platform:      platformService,
+			Readiness:     pool.Ping,
+			CookieSecure:  applicationConfig.CookieSecure,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
