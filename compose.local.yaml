@@ -4,6 +4,7 @@ services:
   api:
     environment:
       APP_ENV: development
+      APP_COOKIE_SECURE: "false" # dev lokal via http://localhost
     ports:
       - "127.0.0.1:8080:8080"
 

@@ -17,11 +17,11 @@ Jalankan sebagai akses awal `root`:
 
 ```bash
 apt-get update && apt-get install -y git && \
-git clone https://github.com/ORGANISASI/ISP-BILLING.git /opt/isp-billing && \
+git clone https://github.com/adtwg/ihik.git /opt/isp-billing && \
 cd /opt/isp-billing && bash install.sh
 ```
 
-Ganti URL repository sebelum menjalankan command. Wizard meminta domain, email
+Wizard meminta domain, email
 ACME, username, dan password Super Admin. Tekan Enter pada prompt password agar
 password admin digenerate otomatis. Dua password PostgreSQL selalu dibuat acak
 dan tidak ditampilkan.

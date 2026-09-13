@@ -8,6 +8,7 @@ coverage.out
 web/node_modules/
 web/.next/
 web/.env.local
+*.tsbuildinfo
 
 # Artefak lokal / tooling — jangan di-commit
 cookies.txt

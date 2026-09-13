@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -38,10 +39,21 @@ func Load() (Config, error) {
 		encryptionKey = decoded
 	}
 
+	// Cookie sesi ditandai Secure secara default (produksi selalu di belakang HTTPS);
+	// set APP_COOKIE_SECURE=false hanya untuk dev lokal via http://localhost.
+	cookieSecure := true
+	if raw := os.Getenv("APP_COOKIE_SECURE"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("APP_COOKIE_SECURE must be true or false")
+		}
+		cookieSecure = parsed
+	}
+
 	return Config{
 		Address:         ":" + port,
 		DatabaseURL:     databaseURL,
-		CookieSecure:    false, // sementara: server belum HTTPS
+		CookieSecure:    cookieSecure,
 		SessionLifetime: 12 * time.Hour,
 		SessionIdleTime: 30 * time.Minute,
 		EncryptionKey:   encryptionKey,

@@ -45,12 +45,12 @@ Login menggunakan akses awal `root`, lalu jalankan satu command chain berikut:
 
 ```bash
 apt-get update && apt-get install -y git && \
-git clone https://github.com/ORGANISASI/ISP-BILLING.git /opt/isp-billing && \
+git clone https://github.com/adtwg/ihik.git /opt/isp-billing && \
 cd /opt/isp-billing && bash install.sh
 ```
 
-Ganti URL repository dengan URL aktual. Untuk repository private, siapkan
-autentikasi Git sebelum clone; installer tidak meminta atau menyimpan token Git.
+Untuk repository private, siapkan autentikasi Git sebelum clone; installer tidak
+meminta atau menyimpan token Git.
 
 Wizard menampilkan 16 tahap progress. Masukkan domain, email notifikasi HTTPS,
 dan username Super Admin. Pada prompt password Super Admin:
