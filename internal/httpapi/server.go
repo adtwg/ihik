@@ -16,6 +16,7 @@ import (
 	"isp-billing/internal/billing"
 	"isp-billing/internal/customer"
 	"isp-billing/internal/dashboard"
+	"isp-billing/internal/olt"
 	"isp-billing/internal/payment"
 	"isp-billing/internal/plan"
 	"isp-billing/internal/platform"
@@ -44,6 +45,7 @@ type server struct {
 	platform      *platform.Service
 	reports       *report.Service
 	router        *router.Service
+	olts          *olt.Service
 	readiness     func(context.Context) error
 	cookieSecure  bool
 }
@@ -59,6 +61,7 @@ type Dependencies struct {
 	Platform      *platform.Service
 	Reports       *report.Service
 	Router        *router.Service
+	OLTs          *olt.Service
 	Readiness     func(context.Context) error
 	CookieSecure  bool
 }
@@ -75,6 +78,7 @@ func NewHandler(deps Dependencies) http.Handler {
 		platform:      deps.Platform,
 		reports:       deps.Reports,
 		router:        deps.Router,
+		olts:          deps.OLTs,
 		readiness:     deps.Readiness,
 		cookieSecure:  deps.CookieSecure,
 	}
@@ -84,6 +88,7 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", api.login)
 	mux.Handle("GET /api/v1/me", api.authenticate(http.HandlerFunc(api.me)))
 	mux.Handle("POST /api/v1/auth/logout", api.authenticate(api.requireCSRF(http.HandlerFunc(api.logout))))
+	mux.Handle("POST /api/v1/auth/change-password", api.authenticate(api.requireCSRF(http.HandlerFunc(api.changePassword))))
 	mux.Handle("GET /api/v1/customers", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.listCustomers))))
 	mux.Handle("POST /api/v1/customers", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.createCustomer)))))
 	mux.Handle("POST /api/v1/customers/{customerID}/archive", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.archiveCustomer)))))
@@ -102,6 +107,7 @@ func NewHandler(deps Dependencies) http.Handler {
 
 	mux.Handle("GET /api/v1/services", api.authenticate(api.authorize(auth.PermissionCustomerManage, http.HandlerFunc(api.listSubscriptions))))
 	mux.Handle("POST /api/v1/services", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.createSubscription)))))
+	mux.Handle("POST /api/v1/services/{serviceID}/provision-pppoe", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.provisionPPPoE)))))
 	mux.Handle("POST /api/v1/services/{serviceID}/isolate", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.isolateSubscription)))))
 	mux.Handle("POST /api/v1/services/{serviceID}/restore", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.restoreSubscription)))))
 	mux.Handle("POST /api/v1/services/{serviceID}/archive", api.authenticate(api.authorize(auth.PermissionCustomerManage, api.requireCSRF(http.HandlerFunc(api.archiveSubscription)))))
@@ -121,7 +127,75 @@ func NewHandler(deps Dependencies) http.Handler {
 	mux.Handle("GET /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, http.HandlerFunc(api.listTenants))))
 	mux.Handle("POST /api/v1/platform/tenants", api.authenticate(api.authorize(auth.PermissionPlatformManage, api.requireCSRF(http.HandlerFunc(api.createTenant)))))
 	mux.Handle("POST /api/v1/platform/tenants/{tenantID}/active", api.authenticate(api.authorize(auth.PermissionPlatformManage, api.requireCSRF(http.HandlerFunc(api.setTenantActive)))))
+
+	// Manajemen OLT ZTE (C320/C300) via SNMP.
+	mux.Handle("GET /api/v1/olts", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.listOLTs))))
+	mux.Handle("POST /api/v1/olts", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.createOLT)))))
+	mux.Handle("GET /api/v1/olts/{oltID}", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.getOLT))))
+	mux.Handle("PUT /api/v1/olts/{oltID}", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.updateOLT)))))
+	mux.Handle("DELETE /api/v1/olts/{oltID}", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.deleteOLT)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/test", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.testOLT)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/test-cli", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.testOLTCLI)))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onus", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.listONUS))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onus-paged", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.listONUSPaged))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onus-stats", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.onuStats))))
+	mux.Handle("GET /api/v1/olts/{oltID}/health", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltHealth))))
+	mux.Handle("GET /api/v1/olts/{oltID}/chassis", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltChassis))))
+	mux.Handle("GET /api/v1/olts/{oltID}/debug-walk", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltDebugWalk))))
+	mux.Handle("POST /api/v1/olts/{oltID}/oct-scan", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltOctScan))))
+	mux.Handle("GET /api/v1/olts/{oltID}/oct-scan", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltOctScan))))
+	mux.Handle("GET /api/v1/olts/{oltID}/ifname-traffic", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.oltIfNameTraffic))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onus/daily", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.onuDaily))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onus/intraday", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.onuIntraday))))
+	mux.Handle("POST /api/v1/olts/{oltID}/refresh-traffic", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.refreshTraffic)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/sync-onus", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.syncONUS)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/sync-optical", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.syncOpticalONUS)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/onu-sync", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.onuSyncOne)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/onus/{action}", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.onuAction)))))
+	mux.Handle("GET /api/v1/olts/{oltID}/uncfg", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.listUnconfiguredONUS))))
+	mux.Handle("POST /api/v1/olts/{oltID}/provision-onu", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.provisionONU)))))
+	mux.Handle("POST /api/v1/olts/{oltID}/onus-cli/{action}", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.onuActionCli)))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onu-traffic-cli", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.onuTrafficCLI))))
+	mux.Handle("GET /api/v1/olts/{oltID}/onu-detail-cli", api.authenticate(api.authorize(auth.PermissionRouterManage, http.HandlerFunc(api.onuDetailCLI))))
+	mux.Handle("POST /api/v1/olts/{oltID}/onu-config-cli", api.authenticate(api.authorize(auth.PermissionRouterManage, api.requireCSRF(http.HandlerFunc(api.onuConfigCLI)))))
+	// Internal/local-only debugging helpers (loopback only).
+	mux.Handle("GET /internal/olts/{oltID}/optical-raw", loopbackOnly(http.HandlerFunc(api.internalOpticalRaw)))
+	mux.Handle("POST /internal/olts/{oltID}/onu-sync", loopbackOnly(http.HandlerFunc(api.internalONUSyncOne)))
+	mux.Handle("GET /internal/olts/{oltID}/optical-table", loopbackOnly(http.HandlerFunc(api.internalOpticalTable)))
+	mux.Handle("GET /internal/olts/{oltID}/onu-traffic-cli", loopbackOnly(http.HandlerFunc(api.internalONUTrafficCLI)))
+	mux.Handle("GET /internal/olts/{oltID}/cli-raw", loopbackOnly(http.HandlerFunc(api.internalCLIRaw)))
+	mux.Handle("GET /internal/olts/{oltID}/onu-oid-scan", loopbackOnly(http.HandlerFunc(api.internalONUOIDScan)))
+	mux.Handle("POST /internal/olts/{oltID}/sync-optical", loopbackOnly(http.HandlerFunc(api.internalSyncOptical)))
+
 	return securityHeaders(mux)
+}
+
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := r.Header.Get("X-Forwarded-For")
+		if clientIP == "" {
+			clientIP = r.Header.Get("X-Real-Ip")
+		}
+		if i := strings.Index(clientIP, ","); i >= 0 {
+			clientIP = clientIP[:i]
+		}
+		clientIP = strings.TrimSpace(clientIP)
+		if clientIP == "" {
+			var err error
+			clientIP, _, err = net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				clientIP = r.RemoteAddr
+			}
+		}
+		// Akses internal diizinkan dari loopback ATAU jaringan private
+		// (gateway container biasanya 172.x saat reverse_proxy ke API).
+		ip := net.ParseIP(clientIP)
+		if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
+			writeError(w, http.StatusForbidden, "forbidden", "internal endpoint")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (server *server) health(response http.ResponseWriter, _ *http.Request) {
@@ -175,7 +249,7 @@ func (server *server) login(response http.ResponseWriter, request *http.Request)
 		MaxAge:   int(time.Until(result.ExpiresAt).Seconds()),
 		HttpOnly: true,
 		Secure:   server.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(response, &http.Cookie{
 		Name:     csrfCookieName,
@@ -185,7 +259,7 @@ func (server *server) login(response http.ResponseWriter, request *http.Request)
 		MaxAge:   int(time.Until(result.ExpiresAt).Seconds()),
 		HttpOnly: false,
 		Secure:   server.cookieSecure,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	writeJSON(response, http.StatusOK, principalResponse(result.Principal))
@@ -193,6 +267,34 @@ func (server *server) login(response http.ResponseWriter, request *http.Request)
 
 func (server *server) me(response http.ResponseWriter, request *http.Request) {
 	writeJSON(response, http.StatusOK, principalResponse(principalFromContext(request.Context())))
+}
+
+func (server *server) changePassword(response http.ResponseWriter, request *http.Request) {
+	principal := principalFromContext(request.Context())
+	request.Body = http.MaxBytesReader(response, request.Body, 8*1024)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	var input struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decoder.Decode(&input); err != nil || input.CurrentPassword == "" || input.NewPassword == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Password lama dan baru wajib diisi.")
+		return
+	}
+	err := server.auth.ChangePassword(request.Context(), principal, input.CurrentPassword, input.NewPassword)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrWrongPassword):
+			writeError(response, http.StatusBadRequest, "wrong_password", "Password saat ini salah.")
+		case errors.Is(err, auth.ErrInvalidInput):
+			writeError(response, http.StatusBadRequest, "invalid_request", "Password baru minimal 12 karakter.")
+		default:
+			writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")
+		}
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]string{"status": "password_changed"})
 }
 
 func (server *server) logout(response http.ResponseWriter, request *http.Request) {
@@ -206,9 +308,8 @@ func (server *server) logout(response http.ResponseWriter, request *http.Request
 }
 
 func (server *server) listCustomers(response http.ResponseWriter, request *http.Request) {
-	principal := principalFromContext(request.Context())
-	if principal.TenantID == nil {
-		writeError(response, http.StatusForbidden, "forbidden", "Akses tenant diperlukan.")
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
 		return
 	}
 	queryValues := request.URL.Query()
@@ -218,7 +319,7 @@ func (server *server) listCustomers(response http.ResponseWriter, request *http.
 		writeError(response, http.StatusBadRequest, "invalid_query", "Parameter halaman tidak valid.")
 		return
 	}
-	result, err := server.customers.List(request.Context(), *principal.TenantID, customer.ListQuery{
+	result, err := server.customers.List(request.Context(), tenantID, customer.ListQuery{
 		Page:            page,
 		PageSize:        pageSize,
 		Search:          queryValues.Get("search"),
@@ -239,9 +340,8 @@ func (server *server) listCustomers(response http.ResponseWriter, request *http.
 }
 
 func (server *server) createCustomer(response http.ResponseWriter, request *http.Request) {
-	principal := principalFromContext(request.Context())
-	if principal.TenantID == nil {
-		writeError(response, http.StatusForbidden, "forbidden", "Akses tenant diperlukan.")
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
 		return
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, 32*1024)
@@ -252,7 +352,7 @@ func (server *server) createCustomer(response http.ResponseWriter, request *http
 		writeError(response, http.StatusBadRequest, "invalid_request", "Data pelanggan tidak valid.")
 		return
 	}
-	created, err := server.customers.Create(request.Context(), *principal.TenantID, input)
+	created, err := server.customers.Create(request.Context(), tenantID, input)
 	if err != nil {
 		if errors.Is(err, customer.ErrInvalidInput) {
 			writeError(response, http.StatusBadRequest, "invalid_request", "Nama atau data pelanggan tidak valid.")
@@ -265,12 +365,11 @@ func (server *server) createCustomer(response http.ResponseWriter, request *http
 }
 
 func (server *server) archiveCustomer(response http.ResponseWriter, request *http.Request) {
-	principal := principalFromContext(request.Context())
-	if principal.TenantID == nil {
-		writeError(response, http.StatusForbidden, "forbidden", "Akses tenant diperlukan.")
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
 		return
 	}
-	err := server.customers.Archive(request.Context(), *principal.TenantID, request.PathValue("customerID"))
+	err := server.customers.Archive(request.Context(), tenantID, request.PathValue("customerID"))
 	if err != nil {
 		if errors.Is(err, customer.ErrNotFound) {
 			writeError(response, http.StatusNotFound, "not_found", "Pelanggan tidak ditemukan.")
@@ -327,7 +426,7 @@ func (server *server) clearAuthCookies(response http.ResponseWriter) {
 			MaxAge:   -1,
 			HttpOnly: name == sessionCookieName,
 			Secure:   server.cookieSecure,
-			SameSite: http.SameSiteStrictMode,
+			SameSite: http.SameSiteLaxMode,
 		})
 	}
 }
@@ -379,6 +478,9 @@ func writeError(response http.ResponseWriter, status int, code, message string) 
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
 	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	response.Header().Set("Pragma", "no-cache")
+	response.Header().Set("Expires", "0")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(value)
 }
@@ -386,7 +488,9 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 func (server *server) authorize(permission string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		principal := principalFromContext(request.Context())
-		if !auth.HasPermission(principal.Role, permission) {
+		// Super Admin adalah pemilik platform dan boleh bertindak atas
+		// nama Mitra (tenant tetap divalidasi lewat server.tenantID).
+		if principal.Role != auth.RoleSuperAdmin && !auth.HasPermission(principal.Role, permission) {
 			writeError(response, http.StatusForbidden, "forbidden", "Anda tidak memiliki izin untuk tindakan ini.")
 			return
 		}
@@ -406,12 +510,11 @@ func positiveInt(raw string, defaultValue int) (int, error) {
 }
 
 func (server *server) mitraDashboard(response http.ResponseWriter, request *http.Request) {
-	principal := principalFromContext(request.Context())
-	if principal.TenantID == nil {
-		writeError(response, http.StatusForbidden, "forbidden", "Akses tenant diperlukan.")
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
 		return
 	}
-	snapshot, err := server.dashboard.Snapshot(request.Context(), *principal.TenantID)
+	snapshot, err := server.dashboard.Snapshot(request.Context(), tenantID)
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, "internal_error", "Dashboard belum dapat dimuat.")
 		return

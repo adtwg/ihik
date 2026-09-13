@@ -1,0 +1,1 @@
+-- Rollback: cabut grant tambahan (default privileges dibiarkan, aman).

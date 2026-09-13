@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"regexp"
@@ -317,6 +318,88 @@ func (service *Service) SetSecretDisabled(ctx context.Context, tenantID, service
 		}
 	}
 	return nil
+}
+
+// ProvisionPPPoE membuat akun PPPoE di router untuk layanan pelanggan
+// yang baru dibuat, memakai profile mapping dari paketnya. Jika router
+// belum dikonfigurasi atau paket belum dipetakan ke profil, method ini
+// mengembalikan ErrNotConfigured tanpa memblokir pembuatan layanan.
+func (service *Service) ProvisionPPPoE(ctx context.Context, tenantID string, input ProvisionInput) (ProvisionResult, error) {
+	if err := service.requireKey(); err != nil {
+		return ProvisionResult{}, err
+	}
+	if tenantID == "" || input.ServiceID == "" || input.PackageID == "" {
+		return ProvisionResult{}, ErrInvalidInput
+	}
+	mapping, err := service.repository.ProfileMappingByPackage(ctx, tenantID, input.PackageID)
+	if err != nil {
+		if errors.Is(err, ErrNotConfigured) {
+			return ProvisionResult{}, ErrNotConfigured
+		}
+		return ProvisionResult{}, fmt.Errorf("cari mapping profil paket: %w", err)
+	}
+
+	username := strings.ToLower(input.CustomerNumber) + "-pppoe"
+	password, err := newRandomPassword()
+	if err != nil {
+		return ProvisionResult{}, err
+	}
+
+	client, stored, err := service.connect(ctx, tenantID)
+	if err != nil {
+		return ProvisionResult{}, err
+	}
+	defer client.Close()
+
+	args := []string{
+		"/ppp/secret/add",
+		"=service=pppoe",
+		"=name=" + username,
+		"=password=" + password,
+		"=profile=" + mapping.ProfileName,
+		"=comment=billing " + input.CustomerNumber,
+	}
+	rows, err := client.Run(args...)
+	if err != nil {
+		return ProvisionResult{}, fmt.Errorf("tambah secret pppoe: %w", err)
+	}
+	externalID := ""
+	if len(rows) > 0 {
+		externalID = rows[0]["ret"]
+	}
+	if externalID == "" {
+		found, err := client.Run("/ppp/secret/print", "?name="+username)
+		if err == nil && len(found) > 0 {
+			externalID = found[0][".id"]
+		}
+	}
+
+	encrypt := func(plaintext string) ([]byte, error) {
+		return secretbox.Encrypt(service.encryptionKey, plaintext)
+	}
+	if err := service.repository.CreateAccount(ctx, tenantID, stored.Config.ID, externalID, username, password, encrypt); err != nil {
+		return ProvisionResult{}, fmt.Errorf("simpan akun pppoe: %w", err)
+	}
+	return ProvisionResult{
+		Username:   username,
+		Password:   password,
+		Profile:    mapping.ProfileName,
+		ExternalID: externalID,
+	}, nil
+}
+
+// newRandomPassword menghasilkan password acak 16 karakter yang aman.
+func newRandomPassword() (string, error) {
+	const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate password: %w", err)
+	}
+	out := make([]byte, len(raw))
+	for i, b := range raw {
+		out[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(out), nil
 }
 
 func truncateError(err error) string {

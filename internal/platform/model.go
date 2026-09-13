@@ -58,4 +58,5 @@ type Repository interface {
 	CreateTenant(ctx context.Context, input CreateTenantInput, passwordHash string) (Tenant, error)
 	List(ctx context.Context, query ListQuery) (PageResult, error)
 	SetTenantActive(ctx context.Context, tenantID string, active bool) error
+	TenantActiveByID(ctx context.Context, tenantID string) (bool, error)
 }

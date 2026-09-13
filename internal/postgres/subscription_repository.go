@@ -129,6 +129,38 @@ func (repository *SubscriptionRepository) Create(ctx context.Context, tenantID s
 	return created, nil
 }
 
+func (repository *SubscriptionRepository) Get(ctx context.Context, tenantID, subscriptionID string) (subscription.Subscription, error) {
+	var item subscription.Subscription
+	err := repository.pool.QueryRow(ctx, `
+		SELECT `+subscriptionSelectColumns+`
+		FROM services s
+		`+subscriptionJoins+`
+		WHERE s.tenant_id = $1 AND s.id = $2 AND s.archived_at IS NULL
+	`, tenantID, subscriptionID).Scan(
+		&item.ID,
+		&item.ServiceNumber,
+		&item.CustomerID,
+		&item.CustomerName,
+		&item.CustomerNumber,
+		&item.PackageID,
+		&item.PackageName,
+		&item.PackageCode,
+		&item.Price,
+		&item.Status,
+		&item.ActivatedAt,
+		&item.IsolatedAt,
+		&item.CreatedAt,
+		&item.ArchivedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return subscription.Subscription{}, subscription.ErrNotFound
+		}
+		return subscription.Subscription{}, err
+	}
+	return item, nil
+}
+
 func (repository *SubscriptionRepository) List(ctx context.Context, tenantID string, query subscription.ListQuery) (subscription.PageResult, error) {
 	sortColumns := map[string]string{
 		"service_number": "s.service_number",

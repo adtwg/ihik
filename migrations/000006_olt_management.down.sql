@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS olt_onus;
+DROP TABLE IF EXISTS olts;

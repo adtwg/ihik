@@ -170,3 +170,19 @@ func (repository *PlatformRepository) SetTenantActive(ctx context.Context, tenan
 }
 
 var _ platform.Repository = (*PlatformRepository)(nil)
+
+func (repository *PlatformRepository) TenantActiveByID(ctx context.Context, tenantID string) (bool, error) {
+	var active bool
+	err := repository.pool.QueryRow(ctx, `
+		SELECT active AND archived_at IS NULL
+		FROM tenants
+		WHERE id = $1
+	`, tenantID).Scan(&active)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, platform.ErrNotFound
+		}
+		return false, err
+	}
+	return active, nil
+}

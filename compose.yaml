@@ -4,6 +4,8 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+# Mode VPS full (Opsi 1): gateway Caddy memegang 80/443 dan mengurus HTTPS/ACME
+# sendiri. Dipakai oleh install.sh. Untuk mode aaPanel pakai compose.aapanel.yaml.
 services:
   postgres:
     image: postgres:17-alpine
@@ -52,7 +54,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      APP_ENV: production
+      APP_ENV: development
       APP_PORT: 8080
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Set APP_ENCRYPTION_KEY in .env}
       DATABASE_URL: postgres://${POSTGRES_APP_USER:?Set POSTGRES_APP_USER in .env}:${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable

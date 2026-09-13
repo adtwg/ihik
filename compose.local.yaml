@@ -1,0 +1,16 @@
+# Mode lokal (PC dev): gateway ACME dimatikan, web & API diekspos ke host.
+# Pakai: docker compose -f compose.yaml -f compose.local.yaml up -d --build
+services:
+  api:
+    environment:
+      APP_ENV: development
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # Gateway Caddy/ACME tidak dipakai di lokal (tak ada domain publik)
+  gateway:
+    profiles: ["donotstart"]

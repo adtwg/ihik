@@ -20,7 +20,7 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
       <PrintActions />
       <header className="print-header">
         <div>
-          <div className="print-brand">ISP Billing</div>
+          <div className="print-brand">AWGRevBILL</div>
           <div className="text-sm text-[#607067]">Tagihan layanan internet</div>
         </div>
         <div className="text-right">

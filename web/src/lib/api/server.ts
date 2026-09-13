@@ -3,11 +3,17 @@ import { APIError, type APIErrorBody, type Principal } from "./types";
 
 const apiBaseURL = process.env.API_INTERNAL_URL ?? "http://localhost:8080";
 
-export async function serverAPI<T>(path: string): Promise<T> {
+export async function serverAPI<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cookieStore = await cookies();
+  const headers = new Headers(init.headers);
+  headers.set("Cookie", cookieStore.toString());
+  headers.set("Accept", "application/json");
+  const impersonated = cookieStore.get("impersonate_tenant")?.value;
+  if (impersonated) headers.set("X-On-Behalf-Tenant", impersonated);
   const response = await fetch(`${apiBaseURL}${path}`, {
+    ...init,
     cache: "no-store",
-    headers: { Cookie: cookieStore.toString(), Accept: "application/json" },
+    headers,
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as APIErrorBody;

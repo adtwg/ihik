@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"isp-billing/internal/router"
+	"isp-billing/internal/secretbox"
 )
 
 type RouterRepository struct {
@@ -410,3 +411,33 @@ func normalizePackageCode(name string) string {
 }
 
 var _ router.Repository = (*RouterRepository)(nil)
+
+func (repository *RouterRepository) ProfileMappingByPackage(ctx context.Context, tenantID, packageID string) (router.ProfileMapping, error) {
+	var mapping router.ProfileMapping
+	err := repository.pool.QueryRow(ctx, `
+		SELECT m.router_id::text, p.external_id, p.name
+		FROM package_router_profiles m
+		JOIN ppp_profiles p ON p.tenant_id = m.tenant_id AND p.router_id = m.router_id AND p.id = m.normal_profile_id
+		WHERE m.tenant_id = $1 AND m.package_id = $2
+		LIMIT 1
+	`, tenantID, packageID).Scan(&mapping.RouterID, &mapping.ProfileExternalID, &mapping.ProfileName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return router.ProfileMapping{}, router.ErrNotConfigured
+		}
+		return router.ProfileMapping{}, err
+	}
+	return mapping, nil
+}
+
+func (repository *RouterRepository) CreateAccount(ctx context.Context, tenantID, routerID, externalID, username, password string, encrypt func(string) ([]byte, error)) error {
+	ciphertext, err := encrypt(password)
+	if err != nil {
+		return fmt.Errorf("enkripsi password pppoe: %w", err)
+	}
+	_, err = repository.pool.Exec(ctx, `
+		INSERT INTO pppoe_accounts (tenant_id, router_id, external_id, username, password_ciphertext, encryption_key_version, sync_status, last_synced_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, 'linked', now())
+	`, tenantID, routerID, externalID, username, ciphertext, secretbox.KeyVersion)
+	return err
+}

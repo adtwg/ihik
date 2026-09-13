@@ -88,3 +88,19 @@ func (service *Service) SetTenantActive(ctx context.Context, tenantID string, ac
 	}
 	return nil
 }
+
+// TenantExists memeriksa apakah tenant ada dan aktif; dipakai untuk
+// validasi aksi on-behalf-of Super Admin.
+func (service *Service) TenantActive(ctx context.Context, tenantID string) (bool, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return false, ErrInvalidInput
+	}
+	active, err := service.repository.TenantActiveByID(ctx, tenantID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, ErrNotFound
+		}
+		return false, fmt.Errorf("check tenant active: %w", err)
+	}
+	return active, nil
+}

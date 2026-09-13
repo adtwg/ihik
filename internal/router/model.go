@@ -96,6 +96,30 @@ type AccountRef struct {
 	ServiceID  string
 }
 
+// ProfileMapping menghubungkan sebuah paket billing dengan profile PPPoE
+// di router yang dipakai saat provisioning otomatis.
+type ProfileMapping struct {
+	RouterID           string
+	ProfileExternalID  string
+	ProfileName        string
+}
+
+// ProvisionInput adalah data yang dibutuhkan untuk membuat akun PPPoE
+// secara otomatis saat layanan pelanggan dibuat.
+type ProvisionInput struct {
+	ServiceID      string
+	CustomerNumber string
+	PackageID      string
+}
+
+// ProvisionResult berisi kredensial PPPoE yang berhasil dibuat di router.
+type ProvisionResult struct {
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Profile    string `json:"profile"`
+	ExternalID string `json:"external_id"`
+}
+
 type Repository interface {
 	Get(ctx context.Context, tenantID string) (StoredCredentials, error)
 	Save(ctx context.Context, tenantID string, input SaveInput, ciphertext []byte, keyVersion int) (Config, error)
@@ -103,4 +127,6 @@ type Repository interface {
 	ApplySync(ctx context.Context, tenantID, routerID string, profiles []ProfileImport, secrets []SecretImport, encrypt func(string) ([]byte, error)) (SyncSummary, error)
 	AccountByCustomer(ctx context.Context, tenantID, customerID string) (AccountRef, error)
 	AccountByService(ctx context.Context, tenantID, serviceID string) (AccountRef, error)
+	ProfileMappingByPackage(ctx context.Context, tenantID, packageID string) (ProfileMapping, error)
+	CreateAccount(ctx context.Context, tenantID, routerID, externalID, username, password string, encrypt func(string) ([]byte, error)) error
 }

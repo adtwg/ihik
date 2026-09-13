@@ -10,7 +10,8 @@ export default async function ProtectedLayout({ children }: { children: React.Re
   } catch {
     redirect("/login");
   }
-  if (user.role !== "mitra") redirect("/platform");
   const cookieStore = await cookies();
-  return <AppShell user={user} initialCollapsed={cookieStore.get("sidebar")?.value === "collapsed"}>{children}</AppShell>;
+  const impersonating = user.role === "super_admin" && Boolean(cookieStore.get("impersonate_tenant")?.value);
+  if (user.role !== "mitra" && !impersonating) redirect("/platform");
+  return <AppShell user={user} impersonating={impersonating} initialCollapsed={cookieStore.get("sidebar")?.value === "collapsed"}>{children}</AppShell>;
 }

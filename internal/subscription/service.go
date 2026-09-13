@@ -31,6 +31,14 @@ func (service *Service) Create(ctx context.Context, tenantID string, input Creat
 	return created, nil
 }
 
+// Get mengambil satu layanan berdasarkan ID dengan tenant scoping.
+func (service *Service) Get(ctx context.Context, tenantID, subscriptionID string) (Subscription, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(subscriptionID) == "" {
+		return Subscription{}, ErrInvalidInput
+	}
+	return service.repository.Get(ctx, tenantID, subscriptionID)
+}
+
 func (service *Service) List(ctx context.Context, tenantID string, query ListQuery) (PageResult, error) {
 	if tenantID == "" {
 		return PageResult{}, ErrInvalidInput

@@ -18,6 +18,7 @@ import (
 	"isp-billing/internal/customer"
 	"isp-billing/internal/dashboard"
 	"isp-billing/internal/httpapi"
+	"isp-billing/internal/olt"
 	"isp-billing/internal/payment"
 	"isp-billing/internal/plan"
 	"isp-billing/internal/platform"
@@ -62,6 +63,7 @@ func main() {
 	platformService := platform.NewService(postgres.NewPlatformRepository(pool))
 	reportService := report.NewService(postgres.NewReportRepository(pool))
 	routerService := router.NewService(postgres.NewRouterRepository(pool), applicationConfig.EncryptionKey)
+	oltService := olt.NewService(postgres.NewOLTRepository(pool), applicationConfig.EncryptionKey)
 
 	server := &http.Server{
 		Addr: applicationConfig.Address,
@@ -76,6 +78,7 @@ func main() {
 			Platform:      platformService,
 			Reports:       reportService,
 			Router:        routerService,
+			OLTs:          oltService,
 			Readiness:     pool.Ping,
 			CookieSecure:  applicationConfig.CookieSecure,
 		}),

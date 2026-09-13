@@ -3,7 +3,7 @@ import "@fontsource-variable/public-sans";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ISP Billing",
+  title: "AWGRevBILL",
   description: "Operasional billing dan provisioning ISP",
 };
 

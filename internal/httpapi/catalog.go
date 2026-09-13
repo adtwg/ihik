@@ -5,18 +5,46 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
+	"isp-billing/internal/auth"
+	"isp-billing/internal/platform"
 	"isp-billing/internal/plan"
-	"isp-billing/internal/subscription"
+	"isp-billing/internal/router"
+	subscriptionpkg "isp-billing/internal/subscription"
 )
 
+// tenantID mengembalikan tenant konteks request. Mitra selalu terikat ke
+// tenant-nya sendiri. Super Admin dapat bertindak atas nama sebuah mitra
+// dengan mengirim header X-On-Behalf-Tenant berisi ID tenant aktif.
 func (server *server) tenantID(response http.ResponseWriter, request *http.Request) (string, bool) {
 	principal := principalFromContext(request.Context())
-	if principal.TenantID == nil {
+	if principal.TenantID != nil {
+		return *principal.TenantID, true
+	}
+	if principal.Role != auth.RoleSuperAdmin {
 		writeError(response, http.StatusForbidden, "forbidden", "Akses tenant diperlukan.")
 		return "", false
 	}
-	return *principal.TenantID, true
+	onBehalf := strings.TrimSpace(request.Header.Get("X-On-Behalf-Tenant"))
+	if onBehalf == "" {
+		writeError(response, http.StatusBadRequest, "tenant_required", "Super Admin wajib mengirim header X-On-Behalf-Tenant berisi ID Mitra.")
+		return "", false
+	}
+	active, err := server.platform.TenantActive(request.Context(), onBehalf)
+	if err != nil {
+		if errors.Is(err, platform.ErrNotFound) {
+			writeError(response, http.StatusNotFound, "not_found", "Mitra tidak ditemukan.")
+			return "", false
+		}
+		writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")
+		return "", false
+	}
+	if !active {
+		writeError(response, http.StatusConflict, "tenant_inactive", "Mitra sedang tidak aktif.")
+		return "", false
+	}
+	return onBehalf, true
 }
 
 func (server *server) listPlans(response http.ResponseWriter, request *http.Request) {
@@ -134,7 +162,7 @@ func (server *server) listSubscriptions(response http.ResponseWriter, request *h
 		writeError(response, http.StatusBadRequest, "invalid_query", "Parameter halaman tidak valid.")
 		return
 	}
-	result, err := server.subscriptions.List(request.Context(), tenantID, subscription.ListQuery{
+	result, err := server.subscriptions.List(request.Context(), tenantID, subscriptionpkg.ListQuery{
 		Page:            page,
 		PageSize:        pageSize,
 		Search:          queryValues.Get("search"),
@@ -144,7 +172,7 @@ func (server *server) listSubscriptions(response http.ResponseWriter, request *h
 		IncludeArchived: queryValues.Get("archived") == "include",
 	})
 	if err != nil {
-		if errors.Is(err, subscription.ErrInvalidInput) {
+		if errors.Is(err, subscriptionpkg.ErrInvalidInput) {
 			writeError(response, http.StatusBadRequest, "invalid_query", "Parameter pencarian tidak valid.")
 			return
 		}
@@ -162,7 +190,7 @@ func (server *server) createSubscription(response http.ResponseWriter, request *
 	request.Body = http.MaxBytesReader(response, request.Body, 16*1024)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
-	var input subscription.CreateInput
+	var input subscriptionpkg.CreateInput
 	if err := decoder.Decode(&input); err != nil {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Data layanan tidak valid.")
 		return
@@ -170,16 +198,56 @@ func (server *server) createSubscription(response http.ResponseWriter, request *
 	created, err := server.subscriptions.Create(request.Context(), tenantID, input)
 	if err != nil {
 		switch {
-		case errors.Is(err, subscription.ErrBadReference):
+		case errors.Is(err, subscriptionpkg.ErrBadReference):
 			writeError(response, http.StatusBadRequest, "invalid_reference", "Pelanggan atau paket tidak ditemukan / tidak aktif.")
-		case errors.Is(err, subscription.ErrInvalidInput):
+		case errors.Is(err, subscriptionpkg.ErrInvalidInput):
 			writeError(response, http.StatusBadRequest, "invalid_request", "Data layanan tidak valid.")
 		default:
 			writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")
 		}
 		return
 	}
-	writeJSON(response, http.StatusCreated, created)
+	// Provisioning PPPoE otomatis (best effort): jika router/paket belum
+	// dipetakan, layanan tetap dibuat dan user bisa provision manual.
+	result := map[string]any{"subscription": created}
+	if provision, err := server.router.ProvisionPPPoE(request.Context(), tenantID, router.ProvisionInput{
+		ServiceID:      created.ID,
+		CustomerNumber: created.CustomerNumber,
+		PackageID:      created.PackageID,
+	}); err == nil {
+		result["pppoe"] = provision
+	} else if !errors.Is(err, router.ErrNotConfigured) && !errors.Is(err, router.ErrNoEncryption) {
+		result["pppoe_error"] = err.Error()
+	}
+	writeJSON(response, http.StatusCreated, result)
+}
+
+// provisionPPPoE membuat akun PPPoE di router untuk layanan yang sudah ada.
+func (server *server) provisionPPPoE(response http.ResponseWriter, request *http.Request) {
+	tenantID, ok := server.tenantID(response, request)
+	if !ok {
+		return
+	}
+	serviceID := request.PathValue("serviceID")
+	subscription, err := server.subscriptions.Get(request.Context(), tenantID, serviceID)
+	if err != nil {
+		if errors.Is(err, subscriptionpkg.ErrNotFound) {
+			writeError(response, http.StatusNotFound, "not_found", "Layanan tidak ditemukan.")
+			return
+		}
+		writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")
+		return
+	}
+	result, err := server.router.ProvisionPPPoE(request.Context(), tenantID, router.ProvisionInput{
+		ServiceID:      subscription.ID,
+		CustomerNumber: subscription.CustomerNumber,
+		PackageID:      subscription.PackageID,
+	})
+	if err != nil {
+		routerErrorResponse(response, err)
+		return
+	}
+	writeJSON(response, http.StatusCreated, result)
 }
 
 func (server *server) isolateSubscription(response http.ResponseWriter, request *http.Request) {
@@ -220,9 +288,9 @@ func (server *server) archiveSubscription(response http.ResponseWriter, request 
 func (server *server) finishSubscriptionTransition(response http.ResponseWriter, request *http.Request, tenantID, subscriptionID string, action func(ctx context.Context, tenantID, subscriptionID string) error) {
 	if err := action(request.Context(), tenantID, subscriptionID); err != nil {
 		switch {
-		case errors.Is(err, subscription.ErrNotFound):
+		case errors.Is(err, subscriptionpkg.ErrNotFound):
 			writeError(response, http.StatusNotFound, "not_found", "Layanan tidak ditemukan.")
-		case errors.Is(err, subscription.ErrInvalidState):
+		case errors.Is(err, subscriptionpkg.ErrInvalidState):
 			writeError(response, http.StatusConflict, "invalid_state", "Status layanan tidak memungkinkan aksi ini.")
 		default:
 			writeError(response, http.StatusInternalServerError, "internal_error", "Terjadi kesalahan internal.")

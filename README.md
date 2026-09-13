@@ -1,6 +1,6 @@
-# ISP Billing
+# AWGRevBILL
 
-ISP billing multi-tenant dengan backend Go/PostgreSQL dan frontend Next.js. Slice saat ini mencakup RBAC Super Admin/Mitra, login aman, dashboard operasional, server-side customer table, model MikroTik PPPoE, sinkronisasi, provisioning, invoice, dan pembayaran kasir.
+AWGRevBILL — NMS & billing ISP multi-tenant dengan backend Go/PostgreSQL dan frontend Next.js. Slice saat ini mencakup RBAC Super Admin/Mitra, login aman, dashboard operasional, server-side customer table, model MikroTik PPPoE, sinkronisasi, provisioning, invoice, dan pembayaran kasir.
 
 ## Prasyarat
 

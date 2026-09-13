@@ -1,0 +1,33 @@
+{
+	auto_https off
+	admin off
+}
+
+# Mode aaPanel: TLS diterminasi Nginx aaPanel di depan, Caddy hanya :80 internal.
+# Nginx aaPanel wajib proxy_pass ke http://127.0.0.1:8090.
+:80 {
+	encode zstd gzip
+
+	header {
+		-Strict-Transport-Security
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+
+	@api path /api/* /health /ready /internal/*
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

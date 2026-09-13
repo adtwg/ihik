@@ -57,6 +57,7 @@ type PageResult struct {
 
 type Repository interface {
 	Create(ctx context.Context, tenantID string, input CreateInput) (Subscription, error)
+	Get(ctx context.Context, tenantID, subscriptionID string) (Subscription, error)
 	List(ctx context.Context, tenantID string, query ListQuery) (PageResult, error)
 	Isolate(ctx context.Context, tenantID, subscriptionID string) error
 	Restore(ctx context.Context, tenantID, subscriptionID string) error

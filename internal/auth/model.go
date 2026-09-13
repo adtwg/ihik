@@ -11,6 +11,8 @@ var (
 	ErrUnauthenticated    = errors.New("authentication required")
 	ErrForbidden          = errors.New("permission denied")
 	ErrNotFound           = errors.New("not found")
+	ErrWrongPassword      = errors.New("current password is incorrect")
+	ErrInvalidInput       = errors.New("invalid input")
 )
 
 const (
@@ -47,9 +49,12 @@ type NewSession struct {
 
 type Repository interface {
 	FindUserByUsername(ctx context.Context, username string) (User, error)
+	FindUserByID(ctx context.Context, userID string) (User, error)
+	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
 	CountRecentFailures(ctx context.Context, username, ipAddress string, since time.Time) (int, error)
 	RecordLoginAttempt(ctx context.Context, username, ipAddress string, succeeded bool) error
 	CreateSession(ctx context.Context, session NewSession) error
 	FindSession(ctx context.Context, tokenHash []byte, now, idleCutoff time.Time) (Principal, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
+	DeleteOtherSessions(ctx context.Context, userID string, keepTokenHash []byte) error
 }

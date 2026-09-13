@@ -41,7 +41,7 @@ func Load() (Config, error) {
 	return Config{
 		Address:         ":" + port,
 		DatabaseURL:     databaseURL,
-		CookieSecure:    os.Getenv("APP_ENV") != "development",
+		CookieSecure:    false, // sementara: server belum HTTPS
 		SessionLifetime: 12 * time.Hour,
 		SessionIdleTime: 30 * time.Minute,
 		EncryptionKey:   encryptionKey,

@@ -262,12 +262,13 @@ func grantRuntimePrivileges(ctx context.Context, connection *pgxpool.Conn, runti
 		"GRANT USAGE ON SCHEMA public TO " + role,
 		"GRANT SELECT ON ALL TABLES IN SCHEMA public TO " + role,
 		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO " + role,
-		"GRANT INSERT, UPDATE ON tenants, users, user_sessions, tenant_counters, customers, routers, ppp_profiles, packages, package_prices, package_router_profiles, services, pppoe_accounts, sync_jobs, sync_conflicts, provisioning_commands, invoices, cash_shifts, payments TO " + role,
-		"GRANT INSERT ON login_attempts, audit_logs, invoice_lines, payment_allocations, receipts TO " + role,
 		"REVOKE DELETE ON ALL TABLES IN SCHEMA public FROM " + role,
+		"GRANT INSERT, UPDATE ON tenants, users, user_sessions, tenant_counters, customers, routers, ppp_profiles, packages, package_prices, package_router_profiles, services, pppoe_accounts, sync_jobs, sync_conflicts, provisioning_commands, invoices, cash_shifts, payments TO " + role,
+		"GRANT INSERT, UPDATE, DELETE ON olts, olt_onus, olt_onu_daily, olt_onu_bps_samples TO " + role,
+		"GRANT INSERT ON login_attempts, audit_logs, invoice_lines, payment_allocations, receipts TO " + role,
 		"REVOKE UPDATE, DELETE ON audit_logs, invoice_lines, payment_allocations, receipts FROM " + role,
 		"REVOKE INSERT, UPDATE, DELETE ON schema_migrations FROM " + role,
-		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO " + role,
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + role,
 		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO " + role,
 	}
 	for _, statement := range statements {

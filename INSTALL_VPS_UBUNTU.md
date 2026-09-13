@@ -12,7 +12,25 @@ memerlukan port standar `80` dan `443`. Hanya Caddy yang membuka kedua port
 tersebut. PostgreSQL (`5432`), Go API (`8080`), dan Next.js (`3000`) tetap berada
 di jaringan private Docker dan tidak dipublikasikan ke VPS atau internet.
 
-## Instalasi Otomatis (Direkomendasikan)
+## Dua Versi Instalasi
+
+Tersedia dua cara memasang. Pilih salah satu sesuai kondisi server:
+
+| Versi | Kapan dipakai | TLS/HTTPS | File utama |
+|---|---|---|---|
+| **Opsi 1 — VPS full (sekali paste)** | VPS Ubuntu 24.04 **kosong**, tanpa panel atau web server lain. Domain diarahkan langsung ke IP VPS. | Caddy menerbitkan sertifikat sendiri (Let's Encrypt) di port `80/443`. | `install.sh`, `compose.yaml`, `Caddyfile` |
+| **Opsi 2 — aaPanel (Nginx di depan)** | Server sudah memakai **aaPanel/Nginx** yang memegang port `80/443`, atau satu server dipakai untuk banyak site. | Nginx aaPanel terminasi SSL, lalu `proxy_pass` ke `127.0.0.1:8090`. | `compose.aapanel.yaml`, `Caddyfile.aapanel`, `deploy-safe.sh` |
+
+- **Opsi 1** dijelaskan pada seluruh bagian di bawah: instalasi otomatis via
+  `install.sh`, ditambah rincian/fallback manual bernomor 1-20.
+- **Opsi 2** berada pada bagian [Opsi 2 — Instalasi via aaPanel](#opsi-2--instalasi-via-aapanel)
+  di akhir dokumen.
+
+> Jangan mencampur kedua mode pada server yang sama. Opsi 1 memerlukan port
+> `80/443` bebas untuk Caddy; Opsi 2 justru memakai `80/443` untuk Nginx aaPanel
+> dan hanya membuka Caddy di `127.0.0.1:8090`.
+
+## Opsi 1 — Instalasi Otomatis VPS Full (Direkomendasikan)
 
 Auto-installer ditujukan untuk Ubuntu Server 24.04 LTS kosong. Sebelum mulai:
 
@@ -120,7 +138,8 @@ Jika volume PostgreSQL ada tetapi `.env` hilang, installer berhenti. Pulihkan
 `.env` dari backup rahasia sebelum melanjutkan. Membuat password baru tidak akan
 membuka database lama.
 
-Installer hanya menerima tujuh key production yang dibuatnya di `.env`.
+Installer hanya menerima delapan key production yang dibuatnya di `.env`
+(termasuk `APP_ENCRYPTION_KEY`).
 Jangan menambahkan `COMPOSE_FILE`, `DOCKER_HOST`, atau konfigurasi aplikasi lain
 ke file tersebut. Jika marker volume hilang, ID berbeda, atau volume yang
 tercatat tidak tersedia, installer berhenti agar database kosong tidak dianggap
@@ -519,11 +538,16 @@ Gunakan dua login PostgreSQL yang berbeda:
 Keduanya memakai password hexadecimal acak 64 karakter sehingga kuat dan aman
 digunakan pada URL koneksi internal.
 
+Tambahan `APP_ENCRYPTION_KEY` (64 karakter hexadecimal) dipakai API untuk
+mengenkripsi kredensial router/OLT. Compose menjadikannya wajib, jadi `.env`
+harus memuatnya.
+
 ```bash
 cd /opt/isp-billing
 umask 077
 POSTGRES_PASSWORD="$(openssl rand -hex 32)"
 POSTGRES_APP_PASSWORD="$(openssl rand -hex 32)"
+APP_ENCRYPTION_KEY="$(openssl rand -hex 32)"
 
 cat > .env <<EOF
 APP_DOMAIN=${APP_DOMAIN}
@@ -533,9 +557,10 @@ POSTGRES_USER=isp_billing_owner
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_APP_USER=isp_billing_app
 POSTGRES_APP_PASSWORD=${POSTGRES_APP_PASSWORD}
+APP_ENCRYPTION_KEY=${APP_ENCRYPTION_KEY}
 EOF
 
-unset POSTGRES_PASSWORD POSTGRES_APP_PASSWORD
+unset POSTGRES_PASSWORD POSTGRES_APP_PASSWORD APP_ENCRYPTION_KEY
 chmod 600 .env
 ```
 
@@ -555,7 +580,7 @@ Jangan menjalankan `cat .env`, `docker compose config`, atau perintah lain yang
 mencetak secret ke terminal/log. Validasi tanpa menampilkan nilainya:
 
 ```bash
-required=(APP_DOMAIN ACME_EMAIL POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD POSTGRES_APP_USER POSTGRES_APP_PASSWORD)
+required=(APP_DOMAIN ACME_EMAIL POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD POSTGRES_APP_USER POSTGRES_APP_PASSWORD APP_ENCRYPTION_KEY)
 declare -A config=()
 for variable in "${required[@]}"; do
   count="$(grep -c "^${variable}=" .env || true)"
@@ -1250,3 +1275,187 @@ https://APP_DOMAIN
 
 Tidak ada port database, API, atau frontend yang dapat diakses langsung dari
 internet.
+
+## Opsi 2 — Instalasi via aaPanel
+
+Pakai opsi ini bila server **sudah** memakai aaPanel dan Nginx-nya memegang port
+`80/443` (misalnya berbagi satu server untuk beberapa domain). Perbedaan utama
+dengan Opsi 1:
+
+- HTTPS/SSL diterbitkan dan diterminasi oleh **Nginx aaPanel**, bukan Caddy.
+- Caddy hanya bind ke `127.0.0.1:8090` (`auto_https off`) sebagai satu origin.
+- Compose yang dipakai adalah `compose.aapanel.yaml` (bukan `compose.yaml`).
+- `install.sh` **tidak dipakai** karena akan berebut port `80/443` dengan Nginx.
+
+```text
+Browser → https://APP_DOMAIN
+   ▼
+Nginx aaPanel :80/:443  (SSL Let's Encrypt via aaPanel)
+   │  proxy_pass http://127.0.0.1:8090
+   ▼
+Caddy gateway (container app-gateway-1, bind 127.0.0.1:8090:80, auto_https off)
+   ├── /api/* /health /ready /internal/* → app-api-1 :8080
+   └── sisanya                            → app-web-1 :3000
+```
+
+### 1. Prasyarat aaPanel
+
+- Ubuntu Server + aaPanel dengan **Nginx** aktif.
+- Docker Engine + Docker Compose plugin resmi terpasang (lihat bagian
+  [5. Instal Docker Engine Resmi](#5-instal-docker-engine-resmi)).
+- Record `A` domain sudah mengarah ke IP server dan sudah bisa diakses lewat
+  Nginx aaPanel.
+
+### 2. Siapkan folder aplikasi dan source
+
+Struktur yang dipakai script deploy adalah `/opt/isp-billing/app`:
+
+```bash
+sudo install -d -m 0750 /opt/isp-billing/app
+cd /opt/isp-billing/app
+# Salin/clone source project ke folder ini (tanpa .env).
+git clone "$REPO_URL" .
+git log -1 --oneline
+```
+
+### 3. Buat `.env` (delapan key)
+
+`.env` diletakkan di `/opt/isp-billing/app/.env`, mode `600`. Jangan pernah
+menaruh nilai secret literal pada perintah paste; gunakan `openssl` agar nilai
+dibuat langsung di server:
+
+```bash
+cd /opt/isp-billing/app
+umask 077
+APP_DOMAIN='billing.example.com'
+ACME_EMAIL='admin@example.com'
+POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+POSTGRES_APP_PASSWORD="$(openssl rand -hex 32)"
+APP_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+
+cat > .env <<EOF
+APP_DOMAIN=${APP_DOMAIN}
+ACME_EMAIL=${ACME_EMAIL}
+POSTGRES_DB=isp_billing
+POSTGRES_USER=isp_billing_owner
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_APP_USER=isp_billing_app
+POSTGRES_APP_PASSWORD=${POSTGRES_APP_PASSWORD}
+APP_ENCRYPTION_KEY=${APP_ENCRYPTION_KEY}
+EOF
+
+unset POSTGRES_PASSWORD POSTGRES_APP_PASSWORD APP_ENCRYPTION_KEY
+chmod 600 .env
+```
+
+`APP_DOMAIN` dan `ACME_EMAIL` tetap diisi karena Compose mewajibkannya, walau
+pada mode aaPanel penerbitan sertifikat dilakukan Nginx, bukan Caddy.
+
+### 4. Deploy pertama
+
+Semua perintah memakai `-f compose.aapanel.yaml`:
+
+```bash
+cd /opt/isp-billing/app
+docker compose -f compose.aapanel.yaml build --pull
+docker compose -f compose.aapanel.yaml up -d --wait --wait-timeout 180
+docker compose -f compose.aapanel.yaml run --rm migrate
+docker compose -f compose.aapanel.yaml ps
+```
+
+Uji origin lokal (belum lewat domain):
+
+```bash
+curl -fsS http://127.0.0.1:8090/health
+curl -fsS http://127.0.0.1:8090/ready
+```
+
+Keduanya harus mengembalikan `{"status":"ok"}`.
+
+### 5. Bootstrap Super Admin
+
+```bash
+cd /opt/isp-billing/app
+docker compose -f compose.aapanel.yaml run --rm --no-deps \
+  --entrypoint /app/bootstrap-admin api --check
+```
+
+Exit `0` = Super Admin sudah ada (lewati). Exit `3` = belum ada, buat sekarang:
+
+```bash
+cd /opt/isp-billing/app
+read -r -p 'Username Super Admin: ' BOOTSTRAP_ADMIN_USERNAME
+read -r -s -p 'Password Super Admin (minimal 20 karakter): ' BOOTSTRAP_ADMIN_PASSWORD
+printf '\n'
+export BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD
+
+docker compose -f compose.aapanel.yaml run --rm --no-deps \
+  -e BOOTSTRAP_ADMIN_USERNAME \
+  -e BOOTSTRAP_ADMIN_PASSWORD \
+  --entrypoint /app/bootstrap-admin api
+
+unset BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD
+```
+
+### 6. Reverse proxy di aaPanel
+
+Di panel aaPanel: **Website → tambah Site** untuk `APP_DOMAIN`, aktifkan **SSL**
+(Let's Encrypt) dan **Force HTTPS**. Lalu buka **Reverse Proxy** pada site itu
+dan arahkan target ke:
+
+```text
+http://127.0.0.1:8090
+```
+
+Jika mengedit konfigurasi Nginx secara manual, blok `location` inti:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8090;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 300s;
+}
+```
+
+Uji dari luar:
+
+```bash
+curl -I "https://$APP_DOMAIN"
+curl -fsS "https://$APP_DOMAIN/health"
+```
+
+Header pertama harus `200`/`301` dari Nginx, dan `/health` mengembalikan
+`{"status":"ok"}`.
+
+### 7. Update berikutnya (deploy aman)
+
+Untuk semua update source berikutnya, gunakan `deploy-safe.sh` yang sudah
+memakai `compose.aapanel.yaml` secara otomatis (snapshot → build `--no-cache` →
+`up --wait` → migrate → verifikasi → auto-rollback bila gagal):
+
+```bash
+cd /opt/isp-billing/app
+# taruh src.tar.gz baru di /opt/isp-billing bila ada, lalu:
+bash deploy-safe.sh
+```
+
+Rollback manual ke snapshot tertentu bila diperlukan:
+
+```bash
+bash /opt/isp-billing/rollback.sh /opt/isp-billing/snap-YYYYMMDD-HHMMSS
+```
+
+### Catatan keamanan Opsi 2
+
+- `.env` tidak boleh masuk tarball source. `deploy-safe.sh` mengunci `.env`
+  (`chattr +i` bila didukung) dan mengecualikannya dari extract.
+- Jangan menyetel HSTS di dua tempat. Header HSTS diatur oleh Nginx aaPanel;
+  `Caddyfile.aapanel` sengaja menghapusnya (`-Strict-Transport-Security`).
+- Port `8090` hanya bind ke `127.0.0.1`, jadi tidak terekspos ke internet.
+  Pastikan firewall provider tetap hanya membuka SSH, `80`, dan `443`.

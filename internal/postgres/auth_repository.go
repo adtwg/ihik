@@ -95,3 +95,35 @@ func (repository *AuthRepository) DeleteSession(ctx context.Context, tokenHash [
 	`, tokenHash)
 	return err
 }
+
+func (repository *AuthRepository) FindUserByID(ctx context.Context, userID string) (auth.User, error) {
+	var user auth.User
+	err := repository.pool.QueryRow(ctx, `
+		SELECT id::text, tenant_id::text, username, password_hash, role_code::text, active
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&user.ID, &user.TenantID, &user.Username, &user.PasswordHash, &user.Role, &user.Active)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.User{}, auth.ErrNotFound
+		}
+		return auth.User{}, err
+	}
+	return user, nil
+}
+
+func (repository *AuthRepository) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	_, err := repository.pool.Exec(ctx, `
+		UPDATE users SET password_hash = $2 WHERE id = $1
+	`, userID, passwordHash)
+	return err
+}
+
+func (repository *AuthRepository) DeleteOtherSessions(ctx context.Context, userID string, keepTokenHash []byte) error {
+	_, err := repository.pool.Exec(ctx, `
+		UPDATE user_sessions
+		SET revoked_at = now()
+		WHERE user_id = $1 AND token_hash <> $2 AND revoked_at IS NULL
+	`, userID, keepTokenHash)
+	return err
+}

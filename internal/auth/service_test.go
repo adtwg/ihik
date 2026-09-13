@@ -13,6 +13,22 @@ type fakeRepository struct {
 	attemptSuccess []bool
 }
 
+func (repository *fakeRepository) FindUserByID(ctx context.Context, userID string) (User, error) {
+	if repository.user.ID == userID && repository.user.ID != "" {
+		return repository.user, nil
+	}
+	return User{}, ErrNotFound
+}
+
+func (repository *fakeRepository) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	repository.user.PasswordHash = passwordHash
+	return nil
+}
+
+func (repository *fakeRepository) DeleteOtherSessions(ctx context.Context, userID string, keepTokenHash []byte) error {
+	return nil
+}
+
 func (repository *fakeRepository) FindUserByUsername(_ context.Context, username string) (User, error) {
 	if repository.user.Username != username {
 		return User{}, ErrNotFound

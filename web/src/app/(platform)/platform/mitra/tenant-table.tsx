@@ -1,7 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus, Power, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, ChevronLeft, ChevronRight, Plus, Power, Search, X } from "lucide-react";
+import { impersonateTenant } from "./actions";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { clientAPI } from "@/lib/api/client";
 import { formatDate } from "@/lib/format";
@@ -66,7 +67,10 @@ export function TenantTable({ data }: { data: TenantPage }) {
               <td>{tenant.user_count.toLocaleString("id-ID")}</td>
               <td>{tenant.customer_count.toLocaleString("id-ID")}</td>
               <td><span className={`status-badge ${tenant.active ? "" : "danger"}`}>{tenant.active ? "Aktif" : "Nonaktif"}</span></td>
-              <td className="w-14"><button className="icon-button" title={tenant.active ? "Nonaktifkan mitra" : "Aktifkan mitra"} aria-label={`${tenant.active ? "Nonaktifkan" : "Aktifkan"} ${tenant.name}`} onClick={() => toggleActive(tenant)}><Power size={17} /></button></td>
+              <td className="w-24"><div className="flex items-center gap-1">
+                <form action={impersonateTenant}><input type="hidden" name="tenant_id" value={tenant.id} /><button className="icon-button" title={tenant.active ? "Kelola mitra ini" : "Mitra nonaktif"} aria-label={`Kelola ${tenant.name}`} disabled={!tenant.active}><Boxes size={17} /></button></form>
+                <button className="icon-button" title={tenant.active ? "Nonaktifkan mitra" : "Aktifkan mitra"} aria-label={`${tenant.active ? "Nonaktifkan" : "Aktifkan"} ${tenant.name}`} onClick={() => toggleActive(tenant)}><Power size={17} /></button>
+              </div></td>
             </tr>)}</tbody>
           </table>
         </div>

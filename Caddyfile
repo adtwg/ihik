@@ -1,8 +1,10 @@
 {
-	email {$ACME_EMAIL}
 	admin off
+	email {$ACME_EMAIL}
 }
 
+# Mode VPS full (Opsi 1): Caddy memegang 80/443 dan menerbitkan HTTPS otomatis
+# via Let's Encrypt untuk APP_DOMAIN. HTTP di-redirect ke HTTPS otomatis.
 {$APP_DOMAIN} {
 	encode zstd gzip
 
@@ -20,7 +22,7 @@
 		format console
 	}
 
-	@api path /api/* /health /ready
+	@api path /api/* /health /ready /internal/*
 	handle @api {
 		reverse_proxy api:8080
 	}

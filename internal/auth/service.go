@@ -128,6 +128,35 @@ func (service *Service) Logout(ctx context.Context, tokenHash []byte) error {
 	return nil
 }
 
+// ChangePassword memverifikasi password lama, menyimpan hash baru,
+// lalu menghapus semua sesi lain milik user tersebut.
+func (service *Service) ChangePassword(ctx context.Context, principal Principal, currentPassword, newPassword string) error {
+	if len(newPassword) < 12 {
+		return ErrInvalidInput
+	}
+	user, err := service.repository.FindUserByID(ctx, principal.UserID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrUnauthenticated
+		}
+		return fmt.Errorf("find user by id: %w", err)
+	}
+	if !VerifyPassword(currentPassword, user.PasswordHash) {
+		return ErrWrongPassword
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return ErrInvalidInput
+	}
+	if err := service.repository.UpdateUserPassword(ctx, user.ID, hash); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if err := service.repository.DeleteOtherSessions(ctx, user.ID, principal.TokenHash); err != nil {
+		return fmt.Errorf("revoke other sessions: %w", err)
+	}
+	return nil
+}
+
 func newSecret() (string, []byte, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

@@ -3,7 +3,12 @@ bin/
 coverage.out
 *.exe
 *.log
+*.out
 .vscode/
 web/node_modules/
 web/.next/
 web/.env.local
+
+# Artefak lokal / tooling — jangan di-commit
+cookies.txt
+.hermes/

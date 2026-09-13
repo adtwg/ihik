@@ -11,7 +11,7 @@ export default async function ReceiptPrintPage({ params }: { params: Promise<{ p
       <PrintActions />
       <header className="print-header">
         <div>
-          <div className="print-brand">ISP Billing</div>
+          <div className="print-brand">AWGRevBILL</div>
           <div className="text-sm text-[#607067]">Bukti pembayaran</div>
         </div>
         <div className="text-right">
