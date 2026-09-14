@@ -608,13 +608,13 @@ detect_ssh_ports() {
   while IFS= read -r endpoint; do
     port=$(endpoint_port "$endpoint" || true)
     [[ -n "$port" ]] && ports+=("$port")
-  done < <(ss -H -tnp state established 2>/dev/null | awk '$0 ~ /"sshd"/ {print $4}')
+  done < <(ss -H -tnp state established 2>/dev/null | awk '$0 ~ /"sshd"/ {print $4}' || true)
   if command -v sshd >/dev/null 2>&1; then
     while IFS= read -r port; do
       if [[ "$port" =~ ^[0-9]+$ ]] && port_is_listening "$port"; then
         ports+=("$port")
       fi
-    done < <(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}')
+    done < <(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' || true)
   fi
   if ((${#ports[@]} == 0)); then
     # Fallback: SSH via systemd socket activation (default Ubuntu 24.04, proses tampil sebagai "systemd").
@@ -622,7 +622,7 @@ detect_ssh_ports() {
     for socket_unit in ssh.socket sshd.socket; do
       while IFS= read -r port; do
         [[ "$port" =~ ^[0-9]+$ ]] && port_is_listening "$port" && ports+=("$port")
-      done < <(systemctl show "$socket_unit" -p Listen 2>/dev/null | grep -oE ':[0-9]+ \(Stream\)' | grep -oE '[0-9]+')
+      done < <(systemctl show "$socket_unit" -p Listen 2>/dev/null | grep -oE ':[0-9]+ \(Stream\)' | grep -oE '[0-9]+' || true)
     done
   fi
   ((${#ports[@]} > 0)) || fatal "port SSH aktif tidak dapat dibuktikan; gunakan --ssh-port PORT setelah memastikan listener aktif"
