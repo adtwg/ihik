@@ -2,7 +2,7 @@
 
 // Panel detail trafik + konfigurasi per-ONU via CLI (expand row).
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { clientAPI } from "@/lib/api/client";
 import type {
@@ -18,7 +18,7 @@ type BpsPoint = { t: number; in_bps: number; out_bps: number };
 type CLISample = { in_octets: number; out_octets: number };
 type CLIResp = { sample?: CLISample };
 type CounterPoint = { t: number; in_octets: number; out_octets: number };
-type DetailResp = { sample?: ONUConfigDetail };
+type DetailResp = { sample?: ONUConfigDetail; raws?: Record<string, string> };
 type ConfigMode = "edit" | "add";
 type ConfigTarget = "name" | "description" | "tcont" | "gemport" | "service_port" | "wan_ip" | "auto_config";
 type ServicePortModeInput = "tagged" | "untagged" | "double_vlan" | "hybrid";
@@ -278,6 +278,9 @@ export function OnuTrafficDetail({
     }
   }, [olt.id, ref]);
 
+  // Batas auto-refresh menunggu deep-config background (hindari loop bila CLI gagal terus).
+  const configRefreshLeft = useRef(3);
+
   const loadDetail = useCallback(async (forceCLI = false) => {
     if (!ref) return;
     setDetailEnriching(true);
@@ -296,14 +299,24 @@ export function OnuTrafficDetail({
         const patchedStatus = sample.status || onu.status;
         const statusKey = normalizeStatusKey(patchedStatus);
         const showOptical = ONLINE_STATUS.has(statusKey);
+        // Fallback ke nilai baris lama: pembacaan optical per-ONU bisa kosong,
+        // jangan menimpa rx/tx tabel dengan 0 saat ONU online.
+        const rxVal = typeof sample.rx_onu_side_dbm === "number" && sample.rx_onu_side_dbm !== 0 ? sample.rx_onu_side_dbm : onu.rx_power_dbm;
+        const txVal = typeof sample.tx_onu_side_dbm === "number" && sample.tx_onu_side_dbm !== 0 ? sample.tx_onu_side_dbm : onu.tx_power_dbm;
         onLiveDetail?.({
           status: normalizeStatusKey(patchedStatus),
           name: sample.name || onu.name,
           serial_number: sample.serial_number || onu.serial_number,
-          distance_m: typeof sample.distance_m === "number" ? sample.distance_m : onu.distance_m,
-          rx_power_dbm: showOptical && typeof sample.rx_onu_side_dbm === "number" ? sample.rx_onu_side_dbm : 0,
-          tx_power_dbm: showOptical && typeof sample.tx_onu_side_dbm === "number" ? sample.tx_onu_side_dbm : 0,
+          distance_m: typeof sample.distance_m === "number" && sample.distance_m !== 0 ? sample.distance_m : onu.distance_m,
+          rx_power_dbm: showOptical ? rxVal : 0,
+          tx_power_dbm: showOptical ? txVal : 0,
         });
+        // Deep-config sedang dimuat di background: refresh sekali agar
+        // tcont/gemport/service-port tampil otomatis saat siap.
+        if (res.raws?.config_loading === "1" && !forceCLI && configRefreshLeft.current > 0) {
+          configRefreshLeft.current -= 1;
+          window.setTimeout(() => void loadDetail(), 20000);
+        }
       }
     } catch {
       // Silent: data dasar sudah ada dari props onu. Enrichment optional.

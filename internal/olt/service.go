@@ -701,15 +701,22 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, po
 
 	onuNumber := fmt.Sprintf("%s:%d", p, oid)
 
+	// Kunci cache = index SNMP asli (kolom olt_onus.index); onuNumber hanya fallback.
+	realIndex, _ := service.repository.FindONUIndexByRef(ctx, tenantID, id, p, oid)
+	cacheKey := strings.TrimSpace(realIndex)
+	if cacheKey == "" {
+		cacheKey = onuNumber
+	}
+
 	// Coba cache CLI detail jika tersedia dan belum basi (<5 menit).
-	cached, cachedAt, cacheErr := service.repository.LoadONUDetailCache(ctx, tenantID, id, onuNumber)
+	cached, cachedAt, cacheErr := service.repository.LoadONUDetailCache(ctx, tenantID, id, cacheKey)
 	if cacheErr != nil {
-		log.Printf("LoadONUDetailCache %s error: %v", onuNumber, cacheErr)
+		log.Printf("LoadONUDetailCache %s error: %v", cacheKey, cacheErr)
 	}
 	cacheFresh := cached != nil && time.Since(cachedAt) < 5*time.Minute
 
 	// SNMP fast path untuk data dasar + optical.
-	snmp, snmpErr := service.fetchONUDetailSNMP(ctx, tenantID, id, p, oid, "")
+	snmp, snmpErr := service.fetchONUDetailSNMP(ctx, tenantID, id, p, oid, realIndex)
 	if snmpErr == nil && snmp != nil {
 		detail := &ONUConfigDetail{
 			PONPort:      p,
@@ -724,7 +731,27 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, po
 			RxONUSideDBM: snmp.RxDBM,
 			TxONUSideDBM: snmp.TxDBM,
 		}
-		if !statusAllowsOptical(snmp.Status) {
+		if statusAllowsOptical(snmp.Status) {
+			// Backfill dari cache full-sync: tabel optical ZTE memakai format
+			// index berbeda sehingga GET per-ONU bisa kosong padahal ONU online.
+			if row := service.lookupCachedONU(ctx, tenantID, id, realIndex, onuNumber); row != nil {
+				if detail.RxONUSideDBM == 0 && row.RxPowerDBM != 0 {
+					detail.RxONUSideDBM = row.RxPowerDBM
+				}
+				if detail.TxONUSideDBM == 0 && row.TxPowerDBM != 0 {
+					detail.TxONUSideDBM = row.TxPowerDBM
+				}
+				if detail.DistanceM == 0 && row.DistanceM != 0 {
+					detail.DistanceM = row.DistanceM
+				}
+				if detail.SerialNumber == "" {
+					detail.SerialNumber = row.SerialNumber
+				}
+				if detail.Name == "" {
+					detail.Name = row.Name
+				}
+			}
+		} else if !statusAllowsOptical(snmp.Status) && snmp.Status != "" && snmp.Status != "unknown" {
 			detail.RxONUSideDBM = 0
 			detail.TxONUSideDBM = 0
 		}
@@ -753,8 +780,17 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, po
 		// CLI detail hanya dieksekusi saat user eksplisit forceCLI, karena CLI per-ONU lambat
 		// dan tidak boleh otomatis background agar tidak memblokir/membebani OLT.
 		if forceCLI && !cacheFresh {
-			return service.ProbeONUConfigCLI(ctx, tenantID, id, p, oid)
+			return service.ProbeONUConfigDetailAndCache(ctx, tenantID, id, p, oid, cacheKey)
 		}
+		// Cache basi: tampilkan config lama dulu (lebih baik daripada kosong),
+		// lalu refresh deep-config via CLI di background (non-blocking, anti-duplikat).
+		if cached != nil {
+			mergeDetailConfig(detail, cached)
+			meta["cached_at"] = cachedAt.Format(time.RFC3339)
+			meta["method"] = "snmp+stale_cache"
+		}
+		service.scheduleDetailConfigFetch(tenantID, id, p, oid, cacheKey)
+		meta["config_loading"] = "1"
 		return detail, meta, nil
 	}
 
@@ -770,14 +806,28 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, po
 
 	// SNMP gagal. Cache tidak fresh. Hanya forceCLI yang trigger CLI lengkap.
 	if forceCLI {
-		return service.ProbeONUConfigCLI(ctx, tenantID, id, p, oid)
+		return service.ProbeONUConfigDetailAndCache(ctx, tenantID, id, p, oid, cacheKey)
 	}
-	// Snapshot minimal agar panel tidak kosong.
-	return &ONUConfigDetail{
+	// Snapshot dari cache full-sync agar panel tidak kosong; deep-config di background.
+	fallback := &ONUConfigDetail{
 		PONPort:   p,
 		ONUID:     oid,
 		Interface: fmt.Sprintf("gpon-onu_%s:%d", p, oid),
-	}, map[string]string{"method": "snapshot"}, nil
+	}
+	if row := service.lookupCachedONU(ctx, tenantID, id, realIndex, onuNumber); row != nil {
+		fallback.Status = row.Status
+		fallback.Name = row.Name
+		fallback.SerialNumber = row.SerialNumber
+		fallback.Description = row.Description
+		fallback.RxONUSideDBM = row.RxPowerDBM
+		fallback.TxONUSideDBM = row.TxPowerDBM
+		fallback.DistanceM = row.DistanceM
+	}
+	if cached != nil {
+		mergeDetailConfig(fallback, cached)
+	}
+	service.scheduleDetailConfigFetch(tenantID, id, p, oid, cacheKey)
+	return fallback, map[string]string{"method": "db_snapshot", "config_loading": "1"}, nil
 }
 
 // backgroundFetchONUConfigDetail menarik detail config via CLI dan menyimpannya ke cache DB.
@@ -795,6 +845,48 @@ func (service *Service) backgroundFetchONUConfigDetail(tenantID, oltID, pon stri
 	if saveErr := service.repository.SaveONUDetailCache(ctx, tenantID, oltID, index, detail); saveErr != nil {
 		log.Printf("SaveONUDetailCache %s error: %v", index, saveErr)
 	}
+}
+
+// detailFetchInFlight mencegah probe CLI ganda untuk ONU yang sama.
+var detailFetchInFlight sync.Map
+
+// scheduleDetailConfigFetch menarik deep-config CLI di background sekali per ONU
+// agar panel detail tidak blocking dan OLT tidak kebanjiran sesi CLI.
+func (service *Service) scheduleDetailConfigFetch(tenantID, oltID, pon string, onuID int, index string) {
+	key := tenantID + "/" + oltID + "/" + index
+	if _, running := detailFetchInFlight.LoadOrStore(key, true); running {
+		return
+	}
+	go func() {
+		defer detailFetchInFlight.Delete(key)
+		service.backgroundFetchONUConfigDetail(tenantID, oltID, pon, onuID, index)
+	}()
+}
+
+// ProbeONUConfigDetailAndCache menjalankan probe CLI penuh lalu menyimpan hasilnya
+// ke cache agar pembukaan detail berikutnya instan.
+func (service *Service) ProbeONUConfigDetailAndCache(ctx context.Context, tenantID, oltID, pon string, onuID int, cacheKey string) (*ONUConfigDetail, map[string]string, error) {
+	detail, raws, err := service.ProbeONUConfigCLI(ctx, tenantID, oltID, pon, onuID)
+	if err == nil && detail != nil && strings.TrimSpace(cacheKey) != "" {
+		if saveErr := service.repository.SaveONUDetailCache(ctx, tenantID, oltID, cacheKey, detail); saveErr != nil {
+			log.Printf("SaveONUDetailCache %s error: %v", cacheKey, saveErr)
+		}
+	}
+	return detail, raws, err
+}
+
+// lookupCachedONU mengembalikan baris cache full-sync satu ONU (match index atau onuNumber).
+func (service *Service) lookupCachedONU(ctx context.Context, tenantID, oltID, index, onuNumber string) *zte.ONU {
+	onus, err := service.repository.ListONUs(ctx, tenantID, oltID)
+	if err != nil {
+		return nil
+	}
+	for i := range onus {
+		if (index != "" && onus[i].Index == index) || (onuNumber != "" && onus[i].ONUNumber == onuNumber) {
+			return &onus[i]
+		}
+	}
+	return nil
 }
 
 func mergeDetailConfig(base, extra *ONUConfigDetail) {
@@ -945,6 +1037,24 @@ func (service *Service) SyncONULiveByRef(ctx context.Context, tenantID, id, inde
 		}
 		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, p, oid, writeStatus, rxPtr, txPtr, distPtr, namePtr, descPtr); dbErr != nil {
 			return ONULiveSyncResult{}, dbErr
+		}
+		// Backfill respons dari cache DB: pembacaan optical per-ONU bisa kosong
+		// (format index tabel optical beda) — FE mem-patch baris, jangan kirim 0.
+		if statusAllowsOptical(status) && (rx == 0 || tx == 0 || distance == 0 || name == "") {
+			if row := service.lookupCachedONU(ctx, tenantID, id, index, fmt.Sprintf("%s:%d", p, oid)); row != nil {
+				if rx == 0 {
+					rx = row.RxPowerDBM
+				}
+				if tx == 0 {
+					tx = row.TxPowerDBM
+				}
+				if distance == 0 {
+					distance = row.DistanceM
+				}
+				if name == "" {
+					name = row.Name
+				}
+			}
 		}
 		if serialPtr != nil {
 			if dbErr := service.repository.UpdateONUSerialByRef(ctx, tenantID, id, p, oid, serialPtr); dbErr != nil {
