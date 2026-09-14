@@ -552,6 +552,21 @@ func (repository *OLTRepository) SaveONUDetailCache(ctx context.Context, tenantI
 	return err
 }
 
+// InvalidateONUDetailCache membuang cache deep-config agar perubahan konfigurasi
+// terbaru tidak tertutup data lama.
+func (repository *OLTRepository) InvalidateONUDetailCache(ctx context.Context, tenantID, oltID, index string) error {
+	if index == "" {
+		return nil
+	}
+	_, err := repository.pool.Exec(ctx, `
+		UPDATE olt_onus SET
+			detail_config_cache=NULL,
+			detail_config_cached_at=NULL
+		WHERE tenant_id=$1 AND olt_id=$2 AND index=$3
+	`, tenantID, oltID, index)
+	return err
+}
+
 func (repository *OLTRepository) LoadONUDetailCache(ctx context.Context, tenantID, oltID, index string) (*olt.ONUConfigDetail, time.Time, error) {
 	var raw []byte
 	var at time.Time

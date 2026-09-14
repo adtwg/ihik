@@ -2753,13 +2753,15 @@ func (service *Service) ApplyONUConfigCLI(ctx context.Context, tenantID, id stri
 
 	configTimeout := 26 * time.Second
 	if op == "set_service_port" {
-		configTimeout = 20 * time.Second
+		configTimeout = 30 * time.Second
 	}
 	if op == "set_service_port_description" {
 		configTimeout = 12 * time.Second
 	}
+	// wan-ip (PPPoE/IPoE) punya banyak kandidat sintaks + verifikasi CLI;
+	// 16s terbukti kurang (HTTP 502) — beri budget lebih longgar.
 	if op == "set_wan_ip" || op == "delete_wan_ip" {
-		configTimeout = 16 * time.Second
+		configTimeout = 40 * time.Second
 	}
 	ctxConfig, cancelConfig := context.WithTimeout(ctx, configTimeout)
 	defer cancelConfig()
@@ -2911,6 +2913,10 @@ func (service *Service) ApplyONUConfigCLI(ctx context.Context, tenantID, id stri
 			}
 		}
 	}
+	// lastVerified menampung snapshot config terbaru hasil probe verifikasi,
+	// dipakai untuk memperbarui cache detail agar panel langsung menampilkan
+	// perubahan (bukan cache lama).
+	var lastVerified *ONUConfigDetail
 	verifyApplied := func(maxAttempts int, waitEach time.Duration, check func(*ONUConfigDetail) bool) error {
 		if maxAttempts < 1 {
 			maxAttempts = 1
@@ -2924,6 +2930,7 @@ func (service *Service) ApplyONUConfigCLI(ctx context.Context, tenantID, id stri
 			if verifyErr != nil {
 				lastErr = verifyErr
 			} else if check(verifyDetail) {
+				lastVerified = verifyDetail
 				return nil
 			} else {
 				lastErr = fmt.Errorf("perubahan belum terbaca pada probe")
@@ -3124,6 +3131,24 @@ func (service *Service) ApplyONUConfigCLI(ctx context.Context, tenantID, id stri
 		if message != "" {
 			message += " (SNMP gagal, fallback CLI aktif)"
 		}
+	}
+	// Sinkronkan cache detail agar panel tidak menampilkan config lama:
+	// simpan snapshot verifikasi (paling segar) atau invalidasi + refresh background.
+	if op != "set_name" && op != "set_description" {
+		cacheCtx, cancelCache := context.WithTimeout(context.Background(), 5*time.Second)
+		if realIndex, idxErr := service.repository.FindONUIndexByRef(cacheCtx, tenantID, id, ponPort, in.ONUID); idxErr == nil && strings.TrimSpace(realIndex) != "" {
+			if lastVerified != nil {
+				if saveErr := service.repository.SaveONUDetailCache(cacheCtx, tenantID, id, realIndex, lastVerified); saveErr != nil {
+					log.Printf("ApplyONUConfigCLI SaveONUDetailCache %s error: %v", realIndex, saveErr)
+				}
+			} else {
+				if invErr := service.repository.InvalidateONUDetailCache(cacheCtx, tenantID, id, realIndex); invErr != nil {
+					log.Printf("ApplyONUConfigCLI InvalidateONUDetailCache %s error: %v", realIndex, invErr)
+				}
+				service.scheduleDetailConfigFetch(tenantID, id, ponPort, in.ONUID, realIndex)
+			}
+		}
+		cancelCache()
 	}
 	return &ONUConfigApplyResult{Operation: op, Method: methodUsed, Executed: done, Message: message}, nil
 }

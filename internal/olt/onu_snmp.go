@@ -106,17 +106,18 @@ func (service *Service) getONUDetailForProfile(session *gosnmp.GoSNMP, profile *
 		}
 	}
 
-	// Serial number (string first; hex fallback)
+	// Serial number (string first; hex fallback) — dibersihkan seperti full sync
+	// (buang prefix "1," + decode hex) agar SN tidak korup saat sync per-ONU.
 	if profile.ONUSerial != "" {
 		oid := profile.BaseOID + profile.ONUSerial + "." + idx
 		if v, err := snmpStringValue(session, oid); err == nil && v != "" {
-			out.SerialNumber = strings.ToUpper(strings.TrimSpace(v))
+			out.SerialNumber = strings.ToUpper(strings.TrimSpace(zte.CleanSerial(v)))
 		}
 	}
 	if out.SerialNumber == "" && profile.ONUSerialHex != "" {
 		oid := profile.BaseOID + profile.ONUSerialHex + "." + idx
 		if v, err := snmpStringValue(session, oid); err == nil && v != "" {
-			out.SerialNumber = strings.ToUpper(strings.TrimSpace(v))
+			out.SerialNumber = strings.ToUpper(strings.TrimSpace(zte.CleanSerial(zte.DecodeHexSerial(v))))
 		}
 	}
 

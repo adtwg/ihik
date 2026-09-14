@@ -106,6 +106,7 @@ type Repository interface {
 	FindONUIndexByRef(ctx context.Context, tenantID, oltID, pon string, onuID int) (string, error)
 	SaveONUDetailCache(ctx context.Context, tenantID, oltID, index string, detail *ONUConfigDetail) error
 	LoadONUDetailCache(ctx context.Context, tenantID, oltID, index string) (*ONUConfigDetail, time.Time, error)
+	InvalidateONUDetailCache(ctx context.Context, tenantID, oltID, index string) error
 	GetDaily(ctx context.Context, tenantID, oltID, index string, days int) ([]OnuDailyRow, error)
 	GetStats(ctx context.Context, tenantID, oltID string) (OnuStats, error)
 	GetLatestBps(ctx context.Context, tenantID, oltID, index string) (BpsRow, error)

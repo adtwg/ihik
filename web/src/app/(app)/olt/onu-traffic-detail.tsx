@@ -281,9 +281,9 @@ export function OnuTrafficDetail({
   // Batas auto-refresh menunggu deep-config background (hindari loop bila CLI gagal terus).
   const configRefreshLeft = useRef(3);
 
-  const loadDetail = useCallback(async (forceCLI = false) => {
+  const loadDetail = useCallback(async (forceCLI = false, silent = false) => {
     if (!ref) return;
-    setDetailEnriching(true);
+    if (!silent) setDetailEnriching(true);
     const controller = new AbortController();
     const timeoutMs = forceCLI ? 50000 : 12000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -311,18 +311,18 @@ export function OnuTrafficDetail({
           rx_power_dbm: showOptical ? rxVal : 0,
           tx_power_dbm: showOptical ? txVal : 0,
         });
-        // Deep-config sedang dimuat di background: refresh sekali agar
-        // tcont/gemport/service-port tampil otomatis saat siap.
+        // Deep-config sedang dimuat di background: refresh senyap (tanpa
+        // spinner) agar tombol tidak terlihat "ngeklik sendiri".
         if (res.raws?.config_loading === "1" && !forceCLI && configRefreshLeft.current > 0) {
           configRefreshLeft.current -= 1;
-          window.setTimeout(() => void loadDetail(), 20000);
+          window.setTimeout(() => void loadDetail(false, true), 20000);
         }
       }
     } catch {
       // Silent: data dasar sudah ada dari props onu. Enrichment optional.
     } finally {
       clearTimeout(timer);
-      setDetailEnriching(false);
+      if (!silent) setDetailEnriching(false);
     }
   }, [olt.id, onu.description, onu.distance_m, onu.name, onu.rx_power_dbm, onu.serial_number, onu.status, onu.tx_power_dbm, onLiveDetail, ref]);
 
@@ -334,8 +334,10 @@ export function OnuTrafficDetail({
   }, [loadDetail]);
 
   useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => void loadTraffic(true), 5000);
+    // Trafik jalan otomatis selama panel terbuka (sampel awal + polling);
+    // toggle "Trafik Live" global mempercepat interval.
+    void loadTraffic(true);
+    const timer = setInterval(() => void loadTraffic(true), live ? 5000 : 10000);
     return () => clearInterval(timer);
   }, [live, loadTraffic]);
 
@@ -358,7 +360,8 @@ export function OnuTrafficDetail({
     setConfigBusy(busyKey);
     setConfigMessage(null);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    // Backend butuh sampai 40s utk wan-ip (banyak kandidat sintaks + verifikasi).
+    const timer = setTimeout(() => controller.abort(), 48000);
     try {
       const res = await clientAPI<ONUConfigApplyResponse>(`/api/v1/olts/${olt.id}/onu-config-cli`, {
         method: "POST",

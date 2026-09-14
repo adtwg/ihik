@@ -812,6 +812,12 @@ func cleanSerial(raw string) string {
 	return raw
 }
 
+// CleanSerial versi publik untuk jalur per-ONU (paket olt).
+func CleanSerial(raw string) string { return cleanSerial(raw) }
+
+// DecodeHexSerial versi publik untuk jalur per-ONU (paket olt).
+func DecodeHexSerial(raw string) string { return decodeHexSerial(raw) }
+
 func allDigit(s string) bool {
 	if s == "" {
 		return false
