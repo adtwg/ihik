@@ -459,22 +459,15 @@ func (repository *OLTRepository) UpdateONUSerialByRef(ctx context.Context, tenan
 	return err
 }
 
-func (repository *OLTRepository) UpdateONULiveByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, status string, rx, tx, distance float64, name, description *string) error {
+func (repository *OLTRepository) UpdateONULiveByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, status string, rx, tx, distance *float64, name, description *string) error {
 	if onuID < 1 {
 		return olt.ErrInvalidInput
 	}
 	onuNumber := fmt.Sprintf("%s:%d", strings.TrimSpace(pon), onuID)
-	state := strings.ToLower(strings.TrimSpace(status))
-	if state == "" {
-		state = "unknown"
-	}
-	// ONU yang tidak online tidak boleh menyimpan redaman.
-	switch state {
-	case "working", "logging", "sync_mib", "online", "ready":
-		// keep optical
-	default:
-		rx = 0
-		tx = 0
+	// status kosong/unknown => jangan ubah kolom status (pertahankan hasil full sync).
+	var stateVal any
+	if state := strings.ToLower(strings.TrimSpace(status)); state != "" && state != "unknown" {
+		stateVal = state
 	}
 	var nameVal any
 	if name != nil {
@@ -490,17 +483,28 @@ func (repository *OLTRepository) UpdateONULiveByRef(ctx context.Context, tenantI
 			descVal = trimmed
 		}
 	}
+	// rx/tx/distance nil => pertahankan nilai lama (COALESCE).
+	var rxVal, txVal, distVal any
+	if rx != nil {
+		rxVal = *rx
+	}
+	if tx != nil {
+		txVal = *tx
+	}
+	if distance != nil {
+		distVal = *distance
+	}
 	tag, err := repository.pool.Exec(ctx, `
 		UPDATE olt_onus SET
-			status=$4,
-			rx_power_dbm=$5,
-			tx_power_dbm=$6,
-			distance_m=$7,
+			status = COALESCE($4, status),
+			rx_power_dbm = COALESCE($5, rx_power_dbm),
+			tx_power_dbm = COALESCE($6, tx_power_dbm),
+			distance_m = COALESCE($7, distance_m),
 			name = COALESCE($8, name),
 			description = COALESCE($9, description),
 			synced_at=now()
 		WHERE tenant_id=$1 AND olt_id=$2 AND onu_number=$3
-	`, tenantID, oltID, onuNumber, state, rx, tx, distance, nameVal, descVal)
+	`, tenantID, oltID, onuNumber, stateVal, rxVal, txVal, distVal, nameVal, descVal)
 	if err != nil {
 		return err
 	}

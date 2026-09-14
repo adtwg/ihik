@@ -86,7 +86,7 @@ func (service *Service) getONUDetailForProfile(session *gosnmp.GoSNMP, profile *
 	if profile.ONUStatus != "" {
 		oid := profile.BaseOID + profile.ONUStatus + "." + idx
 		if v, err := snmpUintValue(session, oid); err == nil {
-			out.Status = StatusFromUint(v)
+			out.Status = zte.StatusFromCode(v)
 		}
 	}
 

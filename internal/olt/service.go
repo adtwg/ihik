@@ -102,7 +102,7 @@ type Repository interface {
 	UpdateONUOptical(ctx context.Context, tenantID, oltID, index string, rx, tx, distance float64) error
 	UpdateONUIdentityByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, name, description *string) error
 	UpdateONUSerialByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, serial *string) error
-	UpdateONULiveByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, status string, rx, tx, distance float64, name, description *string) error
+	UpdateONULiveByRef(ctx context.Context, tenantID, oltID, pon string, onuID int, status string, rx, tx, distance *float64, name, description *string) error
 	FindONUIndexByRef(ctx context.Context, tenantID, oltID, pon string, onuID int) (string, error)
 	SaveONUDetailCache(ctx context.Context, tenantID, oltID, index string, detail *ONUConfigDetail) error
 	LoadONUDetailCache(ctx context.Context, tenantID, oltID, index string) (*ONUConfigDetail, time.Time, error)
@@ -906,9 +906,29 @@ func (service *Service) SyncONULiveByRef(ctx context.Context, tenantID, id, inde
 		rx := snmp.RxDBM
 		tx := snmp.TxDBM
 		distance := snmp.DistanceM
-		if !statusAllowsOptical(status) {
-			rx = 0
-			tx = 0
+
+		// Tulis non-destruktif: status unknown => jangan ubah status/optik lama;
+		// offline terkonfirmasi => nolkan optik; online => tulis optik yang terbaca
+		// (nil = pertahankan nilai lama saat pembacaan drop/kosong).
+		writeStatus := status
+		var rxPtr, txPtr, distPtr *float64
+		switch {
+		case status == "unknown":
+			writeStatus = ""
+		case statusAllowsOptical(status):
+			if rx != 0 {
+				rxPtr = &rx
+			}
+			if tx != 0 {
+				txPtr = &tx
+			}
+			if distance != 0 {
+				distPtr = &distance
+			}
+		default:
+			zero := 0.0
+			rxPtr, txPtr = &zero, &zero
+			rx, tx = 0, 0
 		}
 		var namePtr *string
 		if name != "" {
@@ -923,7 +943,7 @@ func (service *Service) SyncONULiveByRef(ctx context.Context, tenantID, id, inde
 		if serial != "" {
 			serialPtr = &serial
 		}
-		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, p, oid, status, rx, tx, distance, namePtr, descPtr); dbErr != nil {
+		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, p, oid, writeStatus, rxPtr, txPtr, distPtr, namePtr, descPtr); dbErr != nil {
 			return ONULiveSyncResult{}, dbErr
 		}
 		if serialPtr != nil {
@@ -1013,8 +1033,24 @@ func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, 
 				distance = detail.DistanceM
 			}
 		}
-		if !statusAllowsOptical(status) {
-			rx, tx = 0, 0
+		writeStatus := status
+		var rxPtr, txPtr, distPtr *float64
+		switch {
+		case status == "unknown":
+			writeStatus = ""
+		case statusAllowsOptical(status):
+			if rx != 0 {
+				rxPtr = &rx
+			}
+			if tx != 0 {
+				txPtr = &tx
+			}
+			if distance != 0 {
+				distPtr = &distance
+			}
+		default:
+			zero := 0.0
+			rxPtr, txPtr = &zero, &zero
 		}
 		var namePtr, descPtr *string
 		if name != "" {
@@ -1023,7 +1059,7 @@ func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, 
 		if desc != "" {
 			descPtr = &desc
 		}
-		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, pon, onuID, status, rx, tx, distance, namePtr, descPtr); dbErr != nil {
+		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, pon, onuID, writeStatus, rxPtr, txPtr, distPtr, namePtr, descPtr); dbErr != nil {
 			log.Printf("scheduleCLIRefresh UpdateONULiveByRef %s:%d error: %v", pon, onuID, dbErr)
 		}
 		if detail != nil && strings.TrimSpace(index) != "" {

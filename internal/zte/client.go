@@ -715,28 +715,39 @@ func SetONUAdmin(session *gosnmp.GoSNMP, index string, enable bool) error {
 	return nil
 }
 
-func onuStatusText(raw string) string {
-	// ZTE run status: 1=init,2=los,3=ranging,4=online,5=dyinggasp,6=offline,7=authfail
-	switch raw {
-	case "1":
+// StatusFromCode mengonversi kode status ONU numerik (OID .500.10.2.3.8.1.4)
+// ke label kanonik. Sumber kebenaran tunggal — dipakai full sync & per-ONU.
+func StatusFromCode(v uint64) string {
+	switch v {
+	case 1:
 		return "logging"
-	case "2":
+	case 2:
 		return "los"
-	case "3":
+	case 3:
 		return "sync_mib"
-	case "4":
+	case 4:
 		return "working"
-	case "5":
+	case 5:
 		return "dying_gasp"
-	case "6":
+	case 6:
 		return "offlined"
-	case "7":
+	case 7:
 		return "auth_failed"
-	case "":
-		return "unknown"
 	default:
 		return "unknown"
 	}
+}
+
+func onuStatusText(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
+	}
+	n, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return "unknown"
+	}
+	return StatusFromCode(n)
 }
 
 // onuLabel mengubah indeks internal ZTE (mis. 285278469.5) menjadi

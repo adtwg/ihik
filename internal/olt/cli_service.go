@@ -1339,26 +1339,11 @@ func BuildONUIndex(pon string, onuID int) (int64, error) {
 	return idx, nil
 }
 
-// StatusFromUint mengonversi nilai status ONU dari SNMP ke string.
+// StatusFromUint dipertahankan untuk kompatibilitas; delegasi ke sumber
+// kebenaran tunggal zte.StatusFromCode (pemetaan lama di sini keliru:
+// 4 sempat dipetakan ke "offline" sehingga ONU online salah jadi offline).
 func StatusFromUint(v uint64) string {
-	switch v {
-	case 1:
-		return "working"
-	case 2:
-		return "LOS"
-	case 3:
-		return "dying_gasp"
-	case 4:
-		return "offline"
-	case 5:
-		return "auth_failed"
-	case 6:
-		return "logging"
-	case 7:
-		return "sync_mib"
-	default:
-		return fmt.Sprintf("other(%d)", v)
-	}
+	return zte.StatusFromCode(v)
 }
 
 type ONUTcontConfig struct {
