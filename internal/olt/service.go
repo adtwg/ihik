@@ -802,6 +802,16 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, po
 		cached.PONPort = p
 		cached.ONUID = oid
 		cached.Interface = fmt.Sprintf("gpon-onu_%s:%d", p, oid)
+		// Identitas dipaksa dari DB (sumber SNMP exact-index) — cache CLI
+		// pernah terkontaminasi output ONU lain (telnet bleed).
+		if row := service.lookupCachedONU(ctx, tenantID, id, realIndex, onuNumber); row != nil {
+			if strings.TrimSpace(row.Name) != "" {
+				cached.Name = row.Name
+			}
+			if strings.TrimSpace(row.SerialNumber) != "" {
+				cached.SerialNumber = row.SerialNumber
+			}
+		}
 		return cached, map[string]string{"method": "cache", "cached_at": cachedAt.Format(time.RFC3339)}, nil
 	}
 
@@ -1122,12 +1132,8 @@ func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, 
 			return
 		}
 		status := "unknown"
-		name := ""
-		desc := ""
 		if detail != nil {
 			status = normalizeONUStatus(detail.Status)
-			name = strings.TrimSpace(detail.Name)
-			desc = strings.TrimSpace(detail.Description)
 		}
 		rx, tx, distance := 0.0, 0.0, 0.0
 		if optical != nil {
@@ -1163,14 +1169,10 @@ func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, 
 			zero := 0.0
 			rxPtr, txPtr = &zero, &zero
 		}
-		var namePtr, descPtr *string
-		if name != "" {
-			namePtr = &name
-		}
-		if desc != "" {
-			descPtr = &desc
-		}
-		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, pon, onuID, writeStatus, rxPtr, txPtr, distPtr, namePtr, descPtr); dbErr != nil {
+		// Name/description SENGAJA tidak ditulis dari CLI: output telnet pooled
+		// pernah bocor antar-ONU sehingga nama ONU lain menimpa DB. Identitas
+		// hanya ditulis dari SNMP (GET per-index, pasti ONU yang benar).
+		if dbErr := service.repository.UpdateONULiveByRef(ctx, tenantID, id, pon, onuID, writeStatus, rxPtr, txPtr, distPtr, nil, nil); dbErr != nil {
 			log.Printf("scheduleCLIRefresh UpdateONULiveByRef %s:%d error: %v", pon, onuID, dbErr)
 		}
 		if detail != nil && strings.TrimSpace(index) != "" {

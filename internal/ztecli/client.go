@@ -398,6 +398,9 @@ func (s *Session) Execute(ctx context.Context, command string) (string, error) {
 			return "", fmt.Errorf("timeout perintah %q", command)
 		default:
 		}
+		// Buang sisa output perintah sebelumnya (sesi telnet pooled) —
+		// tanpa ini output ONU lain bisa terbaca oleh perintah berikutnya.
+		s.drainStale()
 		s.writeLine(command)
 		outAll := ""
 		for i := 0; i < 64; i++ {
@@ -582,6 +585,23 @@ func (s *Session) Close() {
 }
 
 // ---------- Telnet helpers ----------
+
+// drainStale membaca-dan-membuang sisa buffer socket telnet (output perintah
+// sebelumnya yang timeout di tengah jalan) agar tidak terparse sebagai hasil
+// perintah berikutnya.
+func (s *Session) drainStale() {
+	if s.telnet == nil {
+		return
+	}
+	chunk := make([]byte, 2048)
+	for i := 0; i < 16; i++ {
+		s.telnet.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+		n, err := s.telnet.Read(chunk)
+		if n <= 0 || err != nil {
+			return
+		}
+	}
+}
 
 func (s *Session) writeLine(line string) {
 	_, _ = s.telnet.Write([]byte(line + "\r\n"))
