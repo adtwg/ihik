@@ -6,6 +6,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"isp-billing/internal/zte"
 
@@ -197,12 +199,22 @@ func (service *Service) fetchONUTrafficSNMP(ctx context.Context, tenantID, id, p
 	}
 	defer cleanup()
 
-	// Build expected label, e.g. "1/1/5:7"
-	labels := zte.WalkIfNameLabels(session)
+	// Peta label->ifIndex dari cache (walk ifName penuh MAHAL — jangan per poll).
+	labels, err := service.ifNameLabels(tenantID, id, session)
+	if err != nil {
+		return nil, err
+	}
 	label := zte.ONULabel(fmt.Sprintf("%s:%d", sanitizePON(pon), onuID))
 	ifIndex, ok := labels[label]
 	if !ok {
-		return nil, fmt.Errorf("%w: ifName %s tidak ditemukan", ErrUnreachable, label)
+		// Label belum ada (ONU baru): refresh paksa sekali.
+		labels, err = service.ifNameLabelsRefresh(tenantID, id, session)
+		if err != nil {
+			return nil, err
+		}
+		if ifIndex, ok = labels[label]; !ok {
+			return nil, fmt.Errorf("%w: ifName %s tidak ditemukan", ErrUnreachable, label)
+		}
 	}
 
 	sample, err := zte.SampleTrafficONU(session, ifIndex)
@@ -210,6 +222,50 @@ func (service *Service) fetchONUTrafficSNMP(ctx context.Context, tenantID, id, p
 		return nil, err
 	}
 	return &ONUTrafficSample{InOctets: sample.InOctets, OutOctets: sample.OutOctets, Method: "snmp_iftable"}, nil
+}
+
+// ifNameLabelEntry menyimpan hasil walk ifName per OLT dengan TTL.
+type ifNameLabelEntry struct {
+	labels map[string]string
+	at     time.Time
+}
+
+var (
+	ifNameLabelCache = map[string]*ifNameLabelEntry{}
+	ifNameLabelMu    sync.Mutex
+)
+
+// ifNameLabels mengembalikan peta label ONU->ifIndex dari cache (TTL 10 menit).
+// Walk penuh hanya terjadi saat cache kosong/kedaluwarsa, satu goroutine saja.
+func (service *Service) ifNameLabels(tenantID, oltID string, session *gosnmp.GoSNMP) (map[string]string, error) {
+	key := tenantID + "/" + oltID
+	ifNameLabelMu.Lock()
+	entry := ifNameLabelCache[key]
+	if entry != nil && time.Since(entry.at) < 10*time.Minute {
+		labels := entry.labels
+		ifNameLabelMu.Unlock()
+		return labels, nil
+	}
+	ifNameLabelMu.Unlock()
+	return service.ifNameLabelsRefresh(tenantID, oltID, session)
+}
+
+// ifNameLabelsRefresh melakukan walk ifName dan menyimpan hasilnya ke cache.
+// Lock dipegang selama walk agar poll konkuren menunggu hasil yang sama,
+// bukan memicu walk ganda ke OLT.
+func (service *Service) ifNameLabelsRefresh(tenantID, oltID string, session *gosnmp.GoSNMP) (map[string]string, error) {
+	key := tenantID + "/" + oltID
+	ifNameLabelMu.Lock()
+	defer ifNameLabelMu.Unlock()
+	if entry := ifNameLabelCache[key]; entry != nil && time.Since(entry.at) < 30*time.Second {
+		return entry.labels, nil
+	}
+	labels := zte.WalkIfNameLabels(session)
+	if len(labels) == 0 {
+		return nil, fmt.Errorf("%w: walk ifName kosong", ErrUnreachable)
+	}
+	ifNameLabelCache[key] = &ifNameLabelEntry{labels: labels, at: time.Now()}
+	return labels, nil
 }
 
 // isRealSNMPIndex mengecek apakah string index sesuai format ZTE asli:

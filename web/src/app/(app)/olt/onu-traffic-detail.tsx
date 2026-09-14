@@ -333,11 +333,19 @@ export function OnuTrafficDetail({
     return () => window.clearTimeout(id);
   }, [loadDetail]);
 
+  // Anti-stack: satu request trafik berjalan pada satu waktu per panel.
+  const trafficBusyRef = useRef(false);
+
   useEffect(() => {
-    // Trafik jalan otomatis selama panel terbuka (sampel awal + polling);
-    // toggle "Trafik Live" global mempercepat interval.
-    void loadTraffic(true);
-    const timer = setInterval(() => void loadTraffic(true), live ? 5000 : 10000);
+    // Trafik jalan otomatis selama panel terbuka; berhenti saat tab tersembunyi
+    // dan tidak menumpuk request bila OLT lambat merespons.
+    const tick = () => {
+      if (document.hidden || trafficBusyRef.current) return;
+      trafficBusyRef.current = true;
+      void loadTraffic(true).finally(() => { trafficBusyRef.current = false; });
+    };
+    tick();
+    const timer = setInterval(tick, live ? 5000 : 10000);
     return () => clearInterval(timer);
   }, [live, loadTraffic]);
 
