@@ -417,7 +417,11 @@ func (service *Service) syncONUsRun(ctx context.Context, tenantID, id string) (i
 		id, profile.Name, len(onus), countOnline(onus), countWithOptical(onus))
 	sampleRawOptical(ctx, session, profile, onus)
 
-	if err := service.repository.UpsertONUs(ctx, tenantID, id, onus); err != nil {
+	// Context terpisah untuk tulis DB agar tidak kehabisan budget gara-gara
+	// walk SNMP yang lama (dulu gagal: "begin tx: context deadline exceeded").
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancelWrite()
+	if err := service.repository.UpsertONUs(writeCtx, tenantID, id, onus); err != nil {
 		return 0, fmt.Errorf("simpan cache onu: %w", err)
 	}
 	_, _ = service.RefreshTraffic(ctx, tenantID, id)
@@ -452,8 +456,28 @@ func (service *Service) tryProfile(ctx context.Context, session *gosnmp.GoSNMP, 
 	return profile, onus, nil
 }
 
+// profileLooksGood true bila mayoritas ONU punya serial (profil valid).
+func profileLooksGood(onus []zte.ONU) bool {
+	if len(onus) == 0 {
+		return false
+	}
+	withSerial := 0
+	for _, o := range onus {
+		if strings.TrimSpace(o.SerialNumber) != "" {
+			withSerial++
+		}
+	}
+	return withSerial*2 >= len(onus)
+}
+
 func (service *Service) detectBestProfile(ctx context.Context, session *gosnmp.GoSNMP) (*zte.FirmwareProfile, []zte.ONU, error) {
+	// Coba v2.2 (tree .1082) dulu. Bila sudah menghasilkan ONU ber-serial,
+	// pakai langsung tanpa walk v2.1 (tree .1012) yang lambat/timeout — walk
+	// ganda inilah yang dulu menghabiskan budget context sampai tulis DB gagal.
 	p22, onus22, err22 := service.tryProfile(ctx, session, zte.FirmwareProfiles["v2.2"])
+	if err22 == nil && profileLooksGood(onus22) {
+		return p22, onus22, nil
+	}
 	p21, onus21, err21 := service.tryProfile(ctx, session, zte.FirmwareProfiles["v2.1"])
 
 	score := func(profile *zte.FirmwareProfile, onus []zte.ONU, err error) int {
