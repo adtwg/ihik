@@ -1,4 +1,6 @@
--- Grant privileges untuk tabel runtime yang digunakan oleh aplikasi (isppay_app).
--- Dijalankan sebagai migrasi terpisah agar selalu teraplikasi setelah semua tabel dibuat.
-GRANT SELECT, INSERT, UPDATE, DELETE ON olt_onus, olt_onu_daily, olts TO isppay_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE isppay_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO isppay_app;
+-- Grant runtime untuk tabel OLT kini ditangani dinamis oleh binary migrate
+-- (fungsi grantRuntimePrivileges) memakai nama role runtime dari environment,
+-- sehingga tidak lagi hardcode nama role di sini (dulu: isppay_app/isppay_owner
+-- yang hanya ada di deployment lama, sehingga install baru gagal).
+-- Migrasi dipertahankan sebagai no-op agar urutan versi tetap konsisten.
+DO $$ BEGIN END $$;
