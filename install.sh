@@ -616,6 +616,15 @@ detect_ssh_ports() {
       fi
     done < <(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}')
   fi
+  if ((${#ports[@]} == 0)); then
+    # Fallback: SSH via systemd socket activation (default Ubuntu 24.04, proses tampil sebagai "systemd").
+    local socket_unit
+    for socket_unit in ssh.socket sshd.socket; do
+      while IFS= read -r port; do
+        [[ "$port" =~ ^[0-9]+$ ]] && port_is_listening "$port" && ports+=("$port")
+      done < <(systemctl show "$socket_unit" -p Listen 2>/dev/null | grep -oE ':[0-9]+ \(Stream\)' | grep -oE '[0-9]+')
+    done
+  fi
   ((${#ports[@]} > 0)) || fatal "port SSH aktif tidak dapat dibuktikan; gunakan --ssh-port PORT setelah memastikan listener aktif"
   printf '%s\n' "${ports[@]}" | sort -nu
 }
