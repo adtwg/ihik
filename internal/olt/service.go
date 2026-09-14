@@ -378,6 +378,19 @@ func (service *Service) TestCLI(ctx context.Context, tenantID, id string) (CLITe
 
 // SyncONUs membaca seluruh ONU dari OLT lalu menyimpan cache ke database.
 func (service *Service) SyncONUs(ctx context.Context, tenantID, id string) (int, error) {
+	count, err := service.syncONUsRun(ctx, tenantID, id)
+	// Simpan hasil ke last_error agar UI menampilkan alasan gagal/sukses.
+	statusCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err != nil {
+		_ = service.repository.RecordStatus(statusCtx, tenantID, id, "sync gagal: "+err.Error())
+	} else {
+		_ = service.repository.RecordStatus(statusCtx, tenantID, id, "")
+	}
+	return count, err
+}
+
+func (service *Service) syncONUsRun(ctx context.Context, tenantID, id string) (int, error) {
 	session, cleanup, err := service.connect(ctx, tenantID, id)
 	if err != nil {
 		return 0, err
