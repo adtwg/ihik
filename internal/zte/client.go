@@ -34,7 +34,7 @@ const (
 	oidONUAdmin  = "1.3.6.1.4.1.3902.1082.100.1.2.2.1.7" // admin status per index (1=enable, 2=disable) — beberapa firmware memakai tabel ini
 
 	timeout = 5 * time.Second
-	retries = 1
+	retries = 3
 )
 
 // Credentials berisi parameter koneksi SNMP yang sudah didekripsi.
@@ -103,15 +103,40 @@ func privProtocol(p string) gosnmp.SnmpV3PrivProtocol {
 }
 
 // Connect membuka sesi SNMP sesuai kredensial.
+// snmpTuning mengembalikan timeout/retries/maxRepetitions; dapat dioverride via
+// env (SNMP_TIMEOUT_SECONDS, SNMP_RETRIES, SNMP_MAX_REPETITIONS) untuk jaringan
+// WAN yang rawan drop paket. Default 5s/3 retries/MaxRepetitions 10 (respons UDP
+// lebih kecil => lebih tahan fragmentasi & packet loss lintas WAN).
+func snmpTuning() (time.Duration, int, uint32) {
+	t, r, mr := timeout, retries, uint32(10)
+	if v := os.Getenv("SNMP_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			t = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("SNMP_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			r = n
+		}
+	}
+	if v := os.Getenv("SNMP_MAX_REPETITIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			mr = uint32(n)
+		}
+	}
+	return t, r, mr
+}
+
 func Connect(creds Credentials) (*gosnmp.GoSNMP, error) {
+	tmo, rtr, maxRep := snmpTuning()
 	session := &gosnmp.GoSNMP{
 		Target:         creds.Host,
 		Port:           creds.Port,
 		Transport:      "udp",
-		Timeout:        timeout,
-		Retries:        retries,
+		Timeout:        tmo,
+		Retries:        rtr,
 		MaxOids:        60,
-		MaxRepetitions: 25,
+		MaxRepetitions: maxRep,
 		Context:        context.Background(),
 	}
 	if creds.Mode == "v3" {
@@ -226,8 +251,16 @@ func WalkONUs(ctx context.Context, session *gosnmp.GoSNMP, profile *FirmwareProf
 		return values, err
 	}
 
-	// Core: name wajib berhasil.
-	name, err := walkOne(oidName)
+	// Core: name wajib berhasil. Retry karena SNMP UDP lintas WAN kadang drop
+	// paket — satu timeout jangan menggagalkan seluruh sync.
+	var name map[string]string
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		name, err = walkOne(oidName)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("snmp walk name: %w", err)
 	}
