@@ -15,7 +15,7 @@ import type {
 import { normalizeStatusKey, ONLINE_STATUS } from "@/lib/olts/status";
 
 type BpsPoint = { t: number; in_bps: number; out_bps: number };
-type CLISample = { in_octets: number; out_octets: number };
+type CLISample = { in_octets: number; out_octets: number; method?: string };
 type CLIResp = { sample?: CLISample };
 type CounterPoint = { t: number; in_octets: number; out_octets: number };
 type DetailResp = { sample?: ONUConfigDetail; raws?: Record<string, string> };
@@ -193,7 +193,8 @@ export function OnuTrafficDetail({
   onLiveDetail?: (patch: Partial<ONU>) => void;
 }) {
   const [series, setSeries] = useState<BpsPoint[]>([]);
-  const [lastCounter, setLastCounter] = useState<CounterPoint | null>(null);
+  const lastCounter = useRef<CounterPoint | null>(null);
+  const [trafficSource, setTrafficSource] = useState("-");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ONUConfigDetail | null>(null);
@@ -241,7 +242,12 @@ export function OnuTrafficDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const ref = useMemo(() => resolveOnuRef(onu), [onu.index, onu.onu_number]);
 
+  const trafficController = useRef<AbortController | null>(null);
+  const detailController = useRef<AbortController | null>(null);
+  const configRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadTraffic = useCallback(async (silent = false) => {
+    if (trafficController.current) return;
     if (!ref) {
       setError("Format index ONU tidak dikenali untuk probe CLI.");
       return;
@@ -249,26 +255,29 @@ export function OnuTrafficDetail({
     if (!silent) setLoading(true);
     setError(null);
     const controller = new AbortController();
+    trafficController.current = controller;
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
       const q = new URLSearchParams({ pon: ref.pon, onu_id: String(ref.onuID) });
+      if (silent) q.set("snmp_only", "1");
       const res = await clientAPI<CLIResp>(`/api/v1/olts/${olt.id}/onu-traffic-cli?${q.toString()}`, { signal: controller.signal });
+      if (trafficController.current !== controller || controller.signal.aborted) return;
       const sample = res.sample;
       if (!sample) throw new Error("Counter CLI kosong.");
 
       const now = Math.floor(Date.now() / 1000);
-      setLastCounter((prev) => {
-        if (prev && now > prev.t) {
-          const inDelta = sample.in_octets >= prev.in_octets ? sample.in_octets - prev.in_octets : 0;
-          const outDelta = sample.out_octets >= prev.out_octets ? sample.out_octets - prev.out_octets : 0;
-          const secs = Math.max(1, now - prev.t);
-          const inBps = (inDelta * 8) / secs;
-          const outBps = (outDelta * 8) / secs;
-          setSeries((rows) => [...rows, { t: now, in_bps: inBps, out_bps: outBps }].slice(-120));
-        }
-        return { t: now, in_octets: sample.in_octets, out_octets: sample.out_octets };
-      });
+      const previous = lastCounter.current;
+      if (previous && now > previous.t) {
+        const inDelta = sample.in_octets >= previous.in_octets ? sample.in_octets - previous.in_octets : 0;
+        const outDelta = sample.out_octets >= previous.out_octets ? sample.out_octets - previous.out_octets : 0;
+        const seconds = now - previous.t;
+        const point = { t: now, in_bps: (inDelta * 8) / seconds, out_bps: (outDelta * 8) / seconds };
+        setSeries(rows => [...rows.filter(row => row.t !== now), point].slice(-120));
+      }
+      lastCounter.current = { t: now, in_octets: sample.in_octets, out_octets: sample.out_octets };
+      setTrafficSource(sample.method?.startsWith("snmp") ? "SNMP" : sample.method === "cli" ? "CLI" : "-");
     } catch (e) {
+      if (trafficController.current !== controller) return;
       const isAbort = e instanceof Error && (e.name === "AbortError" || /aborted/i.test(e.message));
       if (isAbort && (controller.signal as AbortSignal).aborted) {
         setError("Timeout membaca trafik ONU. OLT sedang sibuk, coba lagi sebentar.");
@@ -279,7 +288,10 @@ export function OnuTrafficDetail({
       }
     } finally {
       clearTimeout(timer);
-      if (!silent) setLoading(false);
+      if (trafficController.current === controller) {
+        trafficController.current = null;
+        if (!silent) setLoading(false);
+      }
     }
   }, [olt.id, ref]);
 
@@ -288,16 +300,20 @@ export function OnuTrafficDetail({
 
   const loadDetail = useCallback(async (forceCLI = false, silent = false) => {
     if (!ref) return;
+    if (detailController.current) return;
+    if (configRefreshTimer.current) clearTimeout(configRefreshTimer.current);
     if (!silent) setDetailEnriching(true);
     const controller = new AbortController();
-    const timeoutMs = forceCLI ? 50000 : 12000;
+    detailController.current = controller;
+    const timeoutMs = forceCLI ? 60000 : 18000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const q = new URLSearchParams({ pon: ref.pon, onu_id: String(ref.onuID) });
       // Index asli baris = otoritatif di backend (kebal label onu_number basi).
       if (onu.index) q.set("index", onu.index);
       if (forceCLI) q.set("force_cli", "1");
-      const res = await clientAPI<DetailResp>(`/api/v1/olts/${olt.id}/onu-detail-cli?${q.toString()}`, { signal: controller.signal });
+      const res = await clientAPI<DetailResp>(`/api/v1/olts/${olt.id}/onu-detail-cli?${q.toString()}`, { signal: controller.signal, timeoutMs });
+      if (detailController.current !== controller || controller.signal.aborted) return;
       const sample = res.sample ?? null;
       setDetail(sample);
       if (sample) {
@@ -322,37 +338,52 @@ export function OnuTrafficDetail({
         // spinner) agar tombol tidak terlihat "ngeklik sendiri".
         if (res.raws?.config_loading === "1" && !forceCLI && configRefreshLeft.current > 0) {
           configRefreshLeft.current -= 1;
-          window.setTimeout(() => void loadDetail(false, true), 20000);
+          configRefreshTimer.current = setTimeout(() => void loadDetailRef.current(false, true), 20000);
         }
       }
-    } catch {
-      // Silent: data dasar sudah ada dari props onu. Enrichment optional.
+    } catch (error) {
+      if (detailController.current === controller && !silent) {
+        setError(controller.signal.aborted ? "Timeout membaca detail ONU. Snapshot terakhir tetap ditampilkan." : error instanceof Error ? error.message : "Gagal membaca detail ONU.");
+      }
     } finally {
       clearTimeout(timer);
-      if (!silent) setDetailEnriching(false);
+      if (detailController.current === controller) {
+        detailController.current = null;
+        if (!silent) setDetailEnriching(false);
+      }
     }
   }, [olt.id, onu.description, onu.distance_m, onu.index, onu.name, onu.rx_power_dbm, onu.serial_number, onu.status, onu.tx_power_dbm, onLiveDetail, ref]);
 
-  // Fetch awal SEKALI per ONU — patch baris (nama/rx) mengubah identitas prop
-  // onu dan pernah memicu refetch beruntun tanpa henti.
-  const detailFetchedFor = useRef<string | null>(null);
+  const loadDetailRef = useRef(loadDetail);
   useEffect(() => {
-    if (detailFetchedFor.current === onu.index) return;
-    detailFetchedFor.current = onu.index;
-    const id = window.setTimeout(() => void loadDetail(), 50);
-    return () => window.clearTimeout(id);
-  }, [loadDetail, onu.index]);
+    loadDetailRef.current = loadDetail;
+  }, [loadDetail]);
 
-  // Anti-stack: satu request trafik berjalan pada satu waktu per panel.
-  const trafficBusyRef = useRef(false);
+  useEffect(() => {
+    configRefreshLeft.current = 3;
+    setDetail(null);
+    setSeries([]);
+    lastCounter.current = null;
+    setTrafficSource("-");
+    setLoading(false);
+    setDetailEnriching(false);
+    const timer = setTimeout(() => void loadDetailRef.current(), 50);
+    return () => {
+      clearTimeout(timer);
+      if (configRefreshTimer.current) clearTimeout(configRefreshTimer.current);
+      detailController.current?.abort();
+      detailController.current = null;
+      trafficController.current?.abort();
+      trafficController.current = null;
+    };
+  }, [olt.id, onu.index]);
 
   useEffect(() => {
     // Trafik jalan otomatis selama panel terbuka; berhenti saat tab tersembunyi
     // dan tidak menumpuk request bila OLT lambat merespons.
     const tick = () => {
-      if (document.hidden || trafficBusyRef.current) return;
-      trafficBusyRef.current = true;
-      void loadTraffic(true).finally(() => { trafficBusyRef.current = false; });
+      if (document.hidden) return;
+      void loadTraffic(true);
     };
     tick();
     const timer = setInterval(tick, live ? 5000 : 10000);
@@ -385,6 +416,7 @@ export function OnuTrafficDetail({
         method: "POST",
         body: JSON.stringify(payload),
         signal: controller.signal,
+        timeoutMs: 48000,
       });
       const method = res.method ? ` via ${String(res.method).toUpperCase()}` : "";
       setConfigMessage({ text: (res.message || `Konfigurasi ${res.operation} berhasil`) + method });
@@ -392,6 +424,7 @@ export function OnuTrafficDetail({
     } catch (e) {
       setConfigMessage({ text: e instanceof Error ? e.message : "Gagal update konfigurasi ONU.", error: true });
     } finally {
+      clearTimeout(timer);
       setConfigBusy(null);
     }
   }, [loadDetail, olt.id]);
@@ -905,7 +938,7 @@ export function OnuTrafficDetail({
             <span className="font-medium text-[#10251d]">Unggah</span>
             <span className="font-mono font-semibold text-sky-700">{fmtBps(last?.out_bps ?? onu.out_bps)}</span>
           </span>
-          <span className="rounded-full border border-[#d8e7df] bg-[#f6faf8] px-2 py-0.5 text-[10px] font-semibold text-[#4f645a]">Sumber: CLI</span>
+          <span className="rounded-full border border-[#d8e7df] bg-[#f6faf8] px-2 py-0.5 text-[10px] font-semibold text-[#4f645a]">Sumber: {trafficSource}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -955,7 +988,7 @@ export function OnuTrafficDetail({
         </svg>
       ) : (
         <div className="flex h-24 items-center justify-center rounded bg-[#f6faf8] text-xs text-[#8aa096]">
-          Belum ada sampel CLI. Nyalakan <b className="mx-1">Trafik Live</b> atau klik Refresh.
+          Belum ada sampel trafik.
         </div>
       )}
 

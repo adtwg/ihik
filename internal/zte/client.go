@@ -128,6 +128,10 @@ func snmpTuning() (time.Duration, int, uint32) {
 }
 
 func Connect(creds Credentials) (*gosnmp.GoSNMP, error) {
+	return ConnectContext(context.Background(), creds)
+}
+
+func ConnectContext(ctx context.Context, creds Credentials) (*gosnmp.GoSNMP, error) {
 	tmo, rtr, maxRep := snmpTuning()
 	session := &gosnmp.GoSNMP{
 		Target:         creds.Host,
@@ -137,7 +141,7 @@ func Connect(creds Credentials) (*gosnmp.GoSNMP, error) {
 		Retries:        rtr,
 		MaxOids:        60,
 		MaxRepetitions: maxRep,
-		Context:        context.Background(),
+		Context:        ctx,
 	}
 	if creds.Mode == "v3" {
 		session.Version = gosnmp.Version3

@@ -915,9 +915,13 @@ func (server *server) onuTrafficCLI(response http.ResponseWriter, request *http.
 		writeError(response, http.StatusBadRequest, "invalid_request", "Query pon dan onu_id wajib diisi.")
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(request.Context(), 12*time.Second)
 	defer cancel()
-	sample, raws, err := server.olts.ProbeONUTrafficCLI(ctx, tenantID, request.PathValue("oltID"), pon, onuID)
+	probe := server.olts.ProbeONUTrafficCLI
+	if q.Get("snmp_only") == "1" {
+		probe = server.olts.ProbeONUTrafficSNMP
+	}
+	sample, raws, err := probe(ctx, tenantID, request.PathValue("oltID"), pon, onuID)
 	if err != nil {
 		oltErrorResponseWithContext(response, err, "onu-traffic-cli", request.PathValue("oltID"))
 		return

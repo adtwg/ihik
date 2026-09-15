@@ -9,6 +9,120 @@ Keamanan edit/sync: lihat [olt-edit-sync-safety.md](olt-edit-sync-safety.md).
 
 ---
 
+## Pembaruan 2026-09-15: blocking dan tampak depan chassis
+
+Bagian ini menggantikan catatan timeout/geometri/status di riwayat lama bawah.
+
+### Penyebab yang ditemukan pada kode
+
+- `clientAPI` mengganti signal milik komponen dengan controller internal. Abort
+  panel/pindah OLT tidak membatalkan fetch; GET bisa diulang hingga tiga kali.
+- `zte.Connect` memakai context background. Batas waktu HTTP tidak diteruskan
+  ke dial/GET SNMP; socket yang sedang membaca tetap bisa menunggu retry.
+- Cache `ifName` memegang mutex global selama WALK jaringan, menahan OLT lain.
+- Timer enrichment tidak dibersihkan saat panel ditutup. Guard initial-fetch
+  ditandai sebelum timer dijalankan, rentan cleanup/effect replay React.
+- Polling trafik otomatis bisa membuka fallback CLI serial; background detail
+  dan sync tidak berbagi guard per OLT. Polling statistik bisa tumpang tindih.
+- Updater counter menjalankan updater series lain di dalamnya; replay React
+  dapat menghasilkan sampel/timestamp grafik ganda.
+- Chassis tidak membatalkan request OLT sebelumnya; port GTGH/GTGO yang tidak
+  memiliki data ONU/SFP bisa tidak digambar. Semua ONU offline dilabeli LOS,
+  padahal bukan bukti alarm LOS atau status link fisik port.
+
+### Alur yang diperbaiki
+
+1. Komponen -> `clientAPI`: signal pemanggil diteruskan ke controller fetch,
+   listener dibersihkan, request dengan signal tidak di-retry otomatis.
+   Timeout default tetap ada; `timeoutMs` eksplisit dipakai untuk operasi panjang.
+2. Handler -> service -> `zte.ConnectContext`: context diteruskan sejak dial;
+   pembatalan context menutup socket agar GET yang menunggu segera berhenti.
+   Cleanup koneksi tidak lagi menghapus error perangkat seolah probe sukses.
+3. Detail biasa: GET SNMP maksimal 4 detik, service-port maksimal 1 detik,
+   lalu snapshot/cache; tidak menunggu CLI. Force CLI langsung menjalankan
+   probe eksplisit meskipun cache masih fresh. Anggaran ini termasuk jaringan,
+   bukan jaminan waktu DB atau proxy.
+4. Satu pekerjaan background detail/sync per tenant/OLT. Refresh yang sedang
+   sibuk tidak membangun antrean goroutine baru. Auto-refresh panel tetap
+   dibatasi tiga percobaan; deep-config bisa tetap parsial jika CLI gagal/sibuk.
+5. Polling trafik memakai `snmp_only=1`, anggaran SNMP 6 detik; refresh manual
+   tetap mendukung CLI. Handler trafik 12 detik, browser 15 detik. Cache ifName
+   tidak menahan mutex selama WALK dan menolak refresh duplikat per OLT.
+6. Detail: handler 15/55 detik, browser 18/60 detik (normal/force CLI).
+   Chassis: health 8 detik, handler total 25 detik, browser 28 detik.
+7. Semua timer detail dibersihkan saat unmount/ganti ONU; statistik dan trafik
+   hanya satu request aktif per panel. Sampel grafik tidak memiliki efek samping
+   dalam updater state. Sumber trafik mengikuti `sample.method`.
+8. Cache health terpisah per tenant/OLT dan mencegah probe health paralel.
+
+### Dashboard chassis
+
+- Tampak depan tambahan berada di atas inventori existing; tidak mengubah
+  konfigurasi OLT. Blade/card dan konektor dapat dipilih untuk membaca slot,
+  tipe, peran, status, PON, jumlah ONU serta optical yang tersedia.
+- C320: dua blade layanan horizontal (1/2), dua modul kontrol bawah (3/4),
+  panel fan samping. C300: template 16 posisi layanan, kontrol 9/10 dan
+  posisi daya 19/20, blade vertikal dengan proporsi mengacu chassis 10U.
+- Port GTGH=16 dan GTGO=8 tetap muncul walaupun ONU/SFP belum terbaca.
+- Data tidak tersedia dilabeli belum terbaca/terdeteksi, bukan otomatis kosong.
+  ONU offline tidak otomatis dilabeli LOS. Gagal membaca inventori mengembalikan
+  error, bukan chassis kosong palsu. Refresh gagal mempertahankan snapshot lama
+  beserta pesan error; perpindahan OLT membuang snapshot OLT sebelumnya.
+- Collector SNMP menyertakan slot yang hanya memiliki card type. Parser CLI
+  membaca status/peran dan mengabaikan baris terpotong.
+
+Referensi bentuk/spesifikasi yang diperiksa (foto tidak disalin ke aplikasi):
+- https://www.thunder-link.com/c320-2dc-1gtgh.html/
+- https://www.thunder-link.com/c300-1gtgh_p2042.html/
+
+### Batas Akurasi dan Uji Lapangan
+
+Ini template tampak depan berdasarkan referensi, **bukan klaim replika persis
+setiap revisi hardware**. C300 memiliki varian 14/16 slot layanan, subrack
+19/21 inci, board uplink/common-interface dan susunan daya yang dapat berbeda.
+Slot di luar template tetap terlihat di inventori existing. Penomoran mengacu
+inventori API; multi-shelf belum dimodelkan karena `CardInfo` hanya membawa slot.
+
+Status port masih berasal dari ONU/SFP snapshot, bukan `ifOperStatus`/admin
+state terverifikasi. Indikator online berarti ada ONU online pada port tersebut.
+Fan, konektor kontrol dan panel daya adalah bentuk referensi, bukan pembacaan
+sensor/link mereka. Status card/role hanya ditampilkan jika data API tersedia.
+
+Sebelum menyatakan cocok persis dengan lapangan:
+1. Ambil foto tampak depan dan `show card` read-only untuk tiap varian C320/C300.
+2. Bandingkan slot SMXA/SCX, GTGH/GTGO, uplink/daya dan urutan port pada chassis.
+3. Cocokkan snapshot API `/chassis` dengan inventori dan status nyata perangkat.
+4. Uji ONU online/offline, SNMP tidak merespons, CLI sibuk, buka/tutup detail,
+   reload browser, perpindahan OLT dan refresh bersamaan beberapa pengguna.
+5. Verifikasi OID oper/admin port serta multi-shelf sebelum menampilkan indikator
+   sebagai status fisik link atau mendukung chassis yang bukan template ini.
+
+### Verifikasi Lokal
+
+```sh
+go test ./internal/olt ./internal/zte ./internal/ztecli ./internal/httpapi
+node --test web/src/lib/api/client.test.mjs
+npm --prefix web run typecheck
+npm --prefix web run build
+```
+
+Tes regresi meliputi pembatalan GET UDP tanpa balasan, isolasi WALK antar-OLT,
+guard/cache health per tenant, parsing show card dan kapasitas/status port.
+Tes helper API meliputi abort tanpa retry, deadline eksplisit dan timeout default.
+Browser memakai fixture read-only lokal, bukan OLT produksi: reload detail,
+cleanup timer (0 fetch detail setelah tutup + maju 65 detik), pergantian OLT
+lambat, inspector port, serta screenshot desktop 1440px/mobile 390px. Chassis
+lebar digeser dalam area sendiri; tidak membuat halaman mobile melebar.
+
+Hasil sesi lokal: tes paket di atas, tes helper API dan typecheck lulus.
+Production build mencapai compile/typecheck/collecting page data, tetapi
+terminal tidak mengembalikan status akhir yang dapat diverifikasi. Race-test
+juga belum terverifikasi karena masalah eksekusi terminal. Jalankan ulang
+kedua gate tersebut di CI/deployment sebelum rilis. Tidak ada uji OLT live
+atau perubahan konfigurasi perangkat yang dilakukan pada sesi ini.
+
+---
+
 ## Bagian 1 — Detail & Sync per-ONU full-SNMP (fix "stuck")
 
 ### Symptom

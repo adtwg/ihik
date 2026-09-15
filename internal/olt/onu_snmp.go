@@ -36,6 +36,8 @@ type onuSNMPDetail struct {
 // per-ONU ZTE. GET per-index cepat & tidak memicu timeout tabel optical.
 // Profil firmware dipilih murah lewat coba-GET (v2.2 lalu v2.1), tanpa walk.
 func (service *Service) fetchONUDetailSNMP(ctx context.Context, tenantID, id, pon string, onuID int, index string) (*onuSNMPDetail, error) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
 	session, cleanup, err := service.connect(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
@@ -231,8 +233,9 @@ type ifNameLabelEntry struct {
 }
 
 var (
-	ifNameLabelCache = map[string]*ifNameLabelEntry{}
-	ifNameLabelMu    sync.Mutex
+	ifNameLabelCache      = map[string]*ifNameLabelEntry{}
+	ifNameLabelRefreshing = map[string]bool{}
+	ifNameLabelMu         sync.Mutex
 )
 
 // ifNameLabels mengembalikan peta label ONU->ifIndex dari cache (TTL 10 menit).
@@ -251,20 +254,36 @@ func (service *Service) ifNameLabels(tenantID, oltID string, session *gosnmp.GoS
 }
 
 // ifNameLabelsRefresh melakukan walk ifName dan menyimpan hasilnya ke cache.
-// Lock dipegang selama walk agar poll konkuren menunggu hasil yang sama,
-// bukan memicu walk ganda ke OLT.
+// Guard per OLT menolak duplikat tanpa menahan mutex selama I/O jaringan.
 func (service *Service) ifNameLabelsRefresh(tenantID, oltID string, session *gosnmp.GoSNMP) (map[string]string, error) {
 	key := tenantID + "/" + oltID
+	return refreshIfNameLabels(key, func() map[string]string { return zte.WalkIfNameLabels(session) })
+}
+
+func refreshIfNameLabels(key string, walk func() map[string]string) (map[string]string, error) {
 	ifNameLabelMu.Lock()
-	defer ifNameLabelMu.Unlock()
 	if entry := ifNameLabelCache[key]; entry != nil && time.Since(entry.at) < 30*time.Second {
+		ifNameLabelMu.Unlock()
 		return entry.labels, nil
 	}
-	labels := zte.WalkIfNameLabels(session)
+	if ifNameLabelRefreshing[key] {
+		ifNameLabelMu.Unlock()
+		return nil, fmt.Errorf("%w: refresh ifName sedang berjalan", ErrUnreachable)
+	}
+	ifNameLabelRefreshing[key] = true
+	ifNameLabelMu.Unlock()
+	defer func() {
+		ifNameLabelMu.Lock()
+		delete(ifNameLabelRefreshing, key)
+		ifNameLabelMu.Unlock()
+	}()
+	labels := walk()
 	if len(labels) == 0 {
 		return nil, fmt.Errorf("%w: walk ifName kosong", ErrUnreachable)
 	}
+	ifNameLabelMu.Lock()
 	ifNameLabelCache[key] = &ifNameLabelEntry{labels: labels, at: time.Now()}
+	ifNameLabelMu.Unlock()
 	return labels, nil
 }
 

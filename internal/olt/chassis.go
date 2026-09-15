@@ -2,9 +2,11 @@ package olt
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"isp-billing/internal/zte"
 )
@@ -54,7 +56,9 @@ func (service *Service) Chassis(ctx context.Context, tenantID, id string) (*Chas
 	}
 	view := &ChassisView{Model: oltMeta.Model, Family: chassisFamily(oltMeta.Model)}
 
-	health, herr := service.GetHealth(ctx, tenantID, id)
+	healthCtx, cancelHealth := context.WithTimeout(ctx, 8*time.Second)
+	health, herr := service.GetHealth(healthCtx, tenantID, id)
+	cancelHealth()
 	var cards []zte.CardInfo
 	var sfps []zte.SfpInfo
 	if herr == nil && health != nil {
@@ -78,12 +82,15 @@ func (service *Service) Chassis(ctx context.Context, tenantID, id string) (*Chas
 			}
 		}
 	}
-	if len(cards) == 0 && herr != nil {
-		return nil, herr
+	if len(cards) == 0 {
+		return nil, fmt.Errorf("%w: inventori card belum tersedia melalui SNMP/CLI", ErrUnreachable)
 	}
 	view.Source = source
 
-	onus, _ := service.ListONUs(ctx, tenantID, id)
+	onus, err := service.ListONUs(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
 
 	type portKey struct{ slot, port int }
 	type portAgg struct{ total, online int }
@@ -125,7 +132,10 @@ func (service *Service) Chassis(ctx context.Context, tenantID, id string) (*Chas
 			IsControl: isControlCard(c.Type),
 		}
 		if !card.IsControl {
-			maxPort := portHint[c.Slot]
+			maxPort := lineCardPortCount(c.Type)
+			if portHint[c.Slot] > maxPort {
+				maxPort = portHint[c.Slot]
+			}
 			for k := range sfpMap {
 				if k.slot == c.Slot && k.port > maxPort {
 					maxPort = k.port
@@ -137,7 +147,7 @@ func (service *Service) Chassis(ctx context.Context, tenantID, id string) (*Chas
 				}
 			}
 			for p := 1; p <= maxPort; p++ {
-				port := ChassisPort{Port: p}
+				port := ChassisPort{Port: p, Label: fmt.Sprintf("1/%d/%d", c.Slot, p)}
 				if s, ok := sfpMap[portKey{c.Slot, p}]; ok {
 					port.HasSFP = true
 					port.Label = s.Label
@@ -149,6 +159,9 @@ func (service *Service) Chassis(ctx context.Context, tenantID, id string) (*Chas
 					port.ONUOnline = a.online
 				}
 				port.Status = chassisPortStatus(port)
+				if c.Status == "Offline" {
+					port.Status = "offline"
+				}
 				card.Ports = append(card.Ports, port)
 			}
 			card.PortCount = len(card.Ports)
@@ -197,11 +210,22 @@ func chassisPortStatus(p ChassisPort) string {
 	case p.ONUTotal > 0 && p.ONUOnline > 0:
 		return "online"
 	case p.ONUTotal > 0:
-		return "los"
+		return "offline"
 	case p.HasSFP:
 		return "idle"
 	default:
-		return "empty"
+		return "unknown"
+	}
+}
+
+func lineCardPortCount(cardType string) int {
+	switch strings.ToUpper(strings.TrimSpace(cardType)) {
+	case "GTGH":
+		return 16
+	case "GTGO":
+		return 8
+	default:
+		return 0
 	}
 }
 
@@ -245,7 +269,7 @@ func parseShowCard(raw string) ([]zte.CardInfo, map[int]int) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		if len(fields) < 5 {
 			continue
 		}
 		// Baris data diawali Rack Shelf Slot (tiga angka).
@@ -276,8 +300,21 @@ func parseShowCard(raw string) ([]zte.CardInfo, map[int]int) {
 				break
 			}
 		}
-		status := cardStatusFromCLI(fields[len(fields)-1])
-		cards = append(cards, zte.CardInfo{Slot: slot, Type: cardType, Status: status})
+		status, role := "", ""
+		for _, field := range fields[5:] {
+			if parsed := cardStatusFromCLI(field); parsed != "" {
+				status = parsed
+			}
+			switch strings.ToUpper(strings.Trim(field, "()")) {
+			case "ACTIVE", "MASTER":
+				role = "active"
+			case "STANDBY", "SLAVE":
+				role = "standby"
+			}
+		}
+		if cardType != "" {
+			cards = append(cards, zte.CardInfo{Slot: slot, Type: cardType, Status: status, Role: role})
+		}
 	}
 	return cards, portHint
 }
@@ -289,7 +326,7 @@ func cardStatusFromCLI(token string) string {
 		return "InService"
 	case "STANDBY":
 		return "Standby"
-	case "OFFLINE", "FAULT", "ABNORMAL":
+	case "OFFLINE", "FAULT", "ABNORMAL", "NOPOWER":
 		return "Offline"
 	default:
 		return ""

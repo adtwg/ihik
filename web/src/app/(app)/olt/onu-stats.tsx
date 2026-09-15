@@ -37,15 +37,19 @@ export function OnuStatsBar({
 }) {
   useEffect(() => {
     let cancelled = false;
+    let controller: AbortController | null = null;
     async function load() {
+      if (cancelled || controller || document.hidden) return;
+      controller = new AbortController();
       try {
-        const result = await clientAPI<OnuStats>(`/api/v1/olts/${olt.id}/onus-stats`);
+        const result = await clientAPI<OnuStats>(`/api/v1/olts/${olt.id}/onus-stats`, { signal: controller.signal });
         if (!cancelled) setStats(result);
       } catch { /* abaikan */ }
+      finally { controller = null; }
     }
     void load();
     const timer = setInterval(load, 5000);
-    return () => { cancelled = true; clearInterval(timer); };
+    return () => { cancelled = true; clearInterval(timer); controller?.abort(); };
   }, [olt.id, setStats]);
 
   const value = (key: string): number => {

@@ -11,7 +11,7 @@ export function activeImpersonatedTenant(): string | undefined {
   return cookieValue("impersonate_tenant");
 }
 
-export async function clientAPI<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function clientAPI<T>(path: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -34,9 +34,9 @@ export async function clientAPI<T>(path: string, init: RequestInit = {}): Promis
     path.includes("/onu-config-cli");
   // Timeout harus selalu lebih pendek dari backend timeout, supaya browser/gateway
   // tidak mencapai idle timeout sebelum API sempat merespons.
-  const timeoutMs = isLongRunning ? 35000 : method === "GET" ? 20000 : 18000;
+  const timeoutMs = init.timeoutMs ?? (isLongRunning ? 35000 : method === "GET" ? 20000 : 18000);
 
-  const maxAttempts = method === "GET" ? 3 : 1;
+  const maxAttempts = method === "GET" && !init.signal ? 3 : 1;
   let response: Response | null = null;
   let lastError: unknown = null;
 
@@ -49,9 +49,13 @@ export async function clientAPI<T>(path: string, init: RequestInit = {}): Promis
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const abort = () => controller.abort();
+    if (init.signal?.aborted) abort();
+    else init.signal?.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, timeoutMs);
     try {
-      const requestInit: RequestInit = { ...init, headers, credentials: "include", signal: controller.signal };
+      const { timeoutMs: _timeoutMs, ...fetchInit } = init;
+      const requestInit: RequestInit = { ...fetchInit, headers, credentials: "include", signal: controller.signal };
       if (method === "GET") {
         requestInit.cache = "no-store";
         headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -70,6 +74,7 @@ export async function clientAPI<T>(path: string, init: RequestInit = {}): Promis
       await new Promise((resolve) => setTimeout(resolve, attempt * 700));
     } finally {
       clearTimeout(timeout);
+      init.signal?.removeEventListener("abort", abort);
     }
   }
 

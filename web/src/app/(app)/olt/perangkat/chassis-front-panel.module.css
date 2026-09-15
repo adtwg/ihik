@@ -1,0 +1,63 @@
+.section { min-width: 0; border-block: 1px solid #d7dfda; padding: 20px 0; color: #20372d; letter-spacing: 0; }
+.heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.heading h2 { font-size: 20px; font-weight: 750; margin: 0 0 3px; }
+.heading span { font-size: 12px; color: #65786e; }
+.metrics { display: flex; flex-wrap: wrap; gap: 24px; }
+.metrics dt, .inspector dt { font-size: 11px; color: #65786e; }
+.metrics dd { font-size: 22px; font-weight: 700; }
+.metrics small { font-size: 13px; font-weight: 400; color: #65786e; }
+.viewport { max-width: 100%; overflow-x: auto; padding: 6px 2px 12px; }
+.chassis { display: flex; margin: auto; color: #25342e; filter: drop-shadow(0 5px 3px #213e2f22); }
+.c320 { min-width: 800px; max-width: 1160px; }
+.c300 { min-width: 900px; max-width: 940px; }
+.ear { width: 20px; flex-shrink: 0; margin: 12px 0; background: #3d4547; display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 8px 0; border-radius: 2px; }
+.ear span { width: 8px; height: 12px; border-radius: 4px; background: #f3f6f4; border: 1px solid #182421; }
+.enclosure { flex: 1; min-width: 0; padding: 5px; background: linear-gradient(#abb4b9, #e0e3e4 20%, #a6afb3); border: 2px solid #7d898e; }
+.brand { height: 24px; display: flex; align-items: center; gap: 16px; font-size: 10px; padding: 0 10px; color: #253839; }
+.brand strong { color: #087eaf; font-size: 17px; }
+.brand span:last-child { margin-left: auto; font-size: 9px; }
+.compactBody { display: flex; gap: 4px; }
+.fanSide { width: 42px; flex-shrink: 0; background: #354852; color: #e8eceb; border: 1px solid #647578; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-size: 9px; }
+.compactCards { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.controllers { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.blade { height: 61px; min-width: 0; position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #919c9e; background: linear-gradient(180deg, #f0f2f1, #c8d0d1 58%, #e4e8e6); box-shadow: inset 0 1px white, inset 0 -2px #879191; }
+.blade[data-selected="true"] { outline: 2px solid #087958; outline-offset: -2px; }
+.boardLabel { display: flex; align-items: center; gap: 5px; min-width: 96px; flex-shrink: 0; padding: 2px; height: 100%; font-size: 11px; cursor: pointer; }
+.boardLabel strong { max-width: 68px; overflow-wrap: anywhere; }
+.slotNumber { font-weight: 700; font-size: 11px; }
+.screw { width: 6px; height: 6px; border-radius: 50%; border: 1px solid #6d7c7a; background: #dde2df; flex-shrink: 0; }
+.led { display: inline-block; width: 5px; height: 5px; border-radius: 50%; box-shadow: 0 0 0 1px #0002; flex-shrink: 0; }
+.ports { display: flex; align-items: center; justify-content: space-evenly; flex: 1; min-width: 0; gap: 3px; }
+.port { padding: 0; width: 27px; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; flex-shrink: 0; cursor: pointer; }
+.portNumber { font-size: 9px; line-height: 11px; font-weight: 600; }
+.connector { width: 24px; height: 20px; border: 2px solid #687a76; border-bottom-width: 5px; background: #172925; box-shadow: inset 0 0 0 2px #b3bdb8; display: flex; justify-content: center; align-items: center; }
+.port:hover .connector, .port[aria-pressed="true"] .connector { outline: 2px solid #006b4b; outline-offset: 2px; }
+.port:focus-visible, .boardLabel:focus-visible { outline: 2px solid #007958; outline-offset: 1px; }
+.handle { width: 10px; height: 34px; border: 2px solid #81908a; border-radius: 3px; flex-shrink: 0; margin-left: auto; }
+.controlFace { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; }
+.socket { display: block; width: 22px; height: 19px; background: #263430; border: 3px solid #7d8b86; flex-shrink: 0; }
+.role { font-size: 9px; overflow-wrap: anywhere; }
+.vents { display: block; min-width: 15px; flex: 1; height: 24px; opacity: .6; background: repeating-linear-gradient(90deg, transparent 0 3px, #6a7771 3px 5px); }
+.unread { opacity: .72; }
+.rail { height: 8px; margin-top: 3px; border-top: 2px solid #8f9a96; background: #bbc6c0; }
+.fanTray { height: 84px; display: flex; gap: 24px; align-items: center; padding: 15px 35px; border: 1px solid #99a4a0; background: #cdd4d2; }
+.fanTray .vents { height: 46px; }
+.verticalCards { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); gap: 2px; padding-top: 5px; }
+.verticalCards .blade { height: 710px; flex-direction: column; gap: 5px; padding: 5px 2px; }
+.verticalCards .boardLabel { height: 72px; min-width: 0; width: 100%; flex-direction: column; gap: 3px; font-size: 9px; }
+.verticalCards .boardLabel strong { text-align: center; font-size: 8px; }
+.verticalCards .ports { flex-direction: column; gap: 1px; width: 100%; justify-content: flex-start; }
+.verticalCards .port { flex-direction: row; width: 100%; height: 32px; gap: 2px; }
+.verticalCards .portNumber { width: 11px; font-size: 8px; }
+.verticalCards .connector { width: 19px; height: 15px; border-bottom-width: 3px; }
+.verticalCards .handle { width: 15px; height: 38px; margin: auto 0 0; }
+.verticalCards .controlFace { flex-direction: column; width: 100%; padding-top: 10px; }
+.verticalCards .role { font-size: 8px; text-align: center; }
+.verticalCards .vents { width: 12px; max-height: 200px; height: 200px; background: repeating-linear-gradient(0deg, transparent 0 3px, #6a7771 3px 5px); }
+.verticalCards .control { background: linear-gradient(90deg, #b4c4cd, #e2e8eb, #b6c4cc); }
+.powerFace { display: flex; flex-direction: column; align-items: center; gap: 12px; font-size: 8px; padding-top: 12px; }
+.terminal { width: 18px; height: 22px; background: #363e3b; border: 3px solid #b5a154; box-shadow: inset 0 0 0 2px #1d2622; }
+.inspector { margin-top: 10px; padding: 12px 0 0; border-top: 1px solid #d7dfda; font-size: 12px; }
+.inspector dl { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-top: 8px; }
+.inspector dd { margin-top: 3px; font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .heading { align-items: flex-start; } .metrics { gap: 16px; } .heading h2 { font-size: 18px; } .section { padding: 16px 0; } }

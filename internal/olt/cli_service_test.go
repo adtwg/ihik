@@ -1,10 +1,142 @@
 package olt
 
 import (
+	"context"
+	"net"
 	"testing"
+	"time"
 
 	"isp-billing/internal/zte"
 )
+
+type cancellationRepository struct {
+	Repository
+	port int
+}
+
+func (repository cancellationRepository) Credentials(context.Context, string, string) (map[string]any, error) {
+	return map[string]any{"host": "127.0.0.1", "port": repository.port, "mode": "v2c", "community": "test"}, nil
+}
+
+func TestSNMPRequestCancellation(t *testing.T) {
+	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	service := NewService(cancellationRepository{port: listener.LocalAddr().(*net.UDPAddr).Port}, make([]byte, 32))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session, cleanup, err := service.connect(ctx, "tenant", "olt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	done := make(chan error, 1)
+	go func() {
+		_, err := session.Get([]string{"1.3.6.1.2.1.1.1.0"})
+		done <- err
+	}()
+	_ = listener.SetReadDeadline(time.Now().Add(2 * time.Second))
+	packet := make([]byte, 2048)
+	if _, _, err := listener.ReadFrom(packet); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected canceled SNMP request to fail")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SNMP GET remained blocked after request cancellation")
+	}
+}
+
+func TestIfNameRefreshDoesNotBlockOtherOLTs(t *testing.T) {
+	started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = refreshIfNameLabels(t.Name()+"/slow", func() map[string]string {
+			close(started)
+			<-release
+			return map[string]string{"slow": "1"}
+		})
+	}()
+	defer func() { close(release); <-done }()
+	<-started
+	fast := make(chan error, 1)
+	go func() {
+		_, err := refreshIfNameLabels(t.Name()+"/fast", func() map[string]string {
+			return map[string]string{"fast": "2"}
+		})
+		fast <- err
+	}()
+	select {
+	case err := <-fast:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("another OLT was blocked by a slow walk")
+	}
+	if _, err := refreshIfNameLabels(t.Name()+"/slow", func() map[string]string {
+		t.Error("duplicate walk started")
+		return nil
+	}); err == nil {
+		t.Fatal("expected duplicate refresh to return immediately with an error")
+	}
+}
+
+func TestChassisPortInventory(t *testing.T) {
+	if lineCardPortCount("gtgh") != 16 || lineCardPortCount("GTGO") != 8 || lineCardPortCount("unknown") != 0 {
+		t.Fatal("incorrect line card port capacity")
+	}
+	for _, test := range []struct {
+		port ChassisPort
+		want string
+	}{
+		{ChassisPort{}, "unknown"},
+		{ChassisPort{HasSFP: true}, "idle"},
+		{ChassisPort{ONUTotal: 2}, "offline"},
+		{ChassisPort{ONUTotal: 2, ONUOnline: 1}, "online"},
+	} {
+		if got := chassisPortStatus(test.port); got != test.want {
+			t.Errorf("port %+v: got %s, want %s", test.port, got, test.want)
+		}
+	}
+}
+
+func TestParseChassisShowCard(t *testing.T) {
+	if cards, _ := parseShowCard("0 1 1 GTGH\n0 1 2"); len(cards) != 0 {
+		t.Fatalf("truncated rows must not invent installed cards: %+v", cards)
+	}
+	cards, ports := parseShowCard("Rack Shelf Slot CfgType RealType Port HardVer SoftVer Status Role\n0 1 1 GTGH GTGH 16 V1 V2 INSERVICE\n0 1 2 GTGO GTGO 8 V1 V2 OFFLINE\n0 1 3 SMXA SMXA 4 V1 V2 INSERVICE ACTIVE\n0 1 4 SMXA SMXA 4 V1 V2 STANDBY\n0 1 5 - - 0 - - -")
+	if len(cards) != 4 || ports[1] != 16 || ports[2] != 8 {
+		t.Fatalf("unexpected inventory: %+v ports=%v", cards, ports)
+	}
+	if cards[2].Status != "InService" || cards[2].Role != "active" || cards[3].Role != "standby" {
+		t.Fatalf("incorrect control status: %+v", cards)
+	}
+}
+
+func TestHealthCacheIsTenantScoped(t *testing.T) {
+	service := NewService(nil, nil)
+	first := &zte.OltHealth{Cards: []zte.CardInfo{{Slot: 1, Type: "GTGH"}}}
+	second := &zte.OltHealth{Cards: []zte.CardInfo{{Slot: 2, Type: "GTGO"}}}
+	service.healthCache["first/olt"] = healthCacheEntry{data: first, at: time.Now()}
+	service.healthCache["second/olt"] = healthCacheEntry{data: second, at: time.Now()}
+	for tenant, expected := range map[string]*zte.OltHealth{"first": first, "second": second} {
+		actual, err := service.GetHealth(context.Background(), tenant, "olt")
+		if err != nil || actual != expected {
+			t.Fatalf("tenant %s: got %+v, err=%v", tenant, actual, err)
+		}
+	}
+	service.healthRefresh.Store("busy/olt", true)
+	if _, err := service.GetHealth(context.Background(), "busy", "olt"); err == nil {
+		t.Fatal("duplicate health refresh must return without starting another probe")
+	}
+}
 
 func TestParseONUConfigDetail(t *testing.T) {
 	detail := &ONUConfigDetail{}

@@ -3,16 +3,17 @@
 // Skema fisik chassis OLT: card per slot + status port. Data-driven dari
 // /api/v1/olts/{id}/chassis (SNMP health + fallback CLI "show card").
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Cpu, MemoryStick, RefreshCw, Server, Thermometer } from "lucide-react";
 import { clientAPI } from "@/lib/api/client";
 import { type ChassisCard, type ChassisPort, type ChassisView as Chassis, type OLT } from "@/lib/olts/types";
+import { ChassisFrontPanel } from "./chassis-front-panel";
 
 // Jumlah slot minimal per keluarga chassis untuk memberi kesan rak penuh.
 // Perkiraan; slot kosong hanya pengisi visual, card nyata tetap dari data.
 const FAMILY_BASE_SLOTS: Record<string, number> = {
   C320: 4,
-  C300: 19,
+  C300: 20,
   C220: 10,
   C600: 16,
 };
@@ -36,10 +37,12 @@ function portStyle(status: string): { cls: string; title: string } {
       return { cls: "bg-emerald-500 border-emerald-600 text-white", title: "Online" };
     case "los":
       return { cls: "bg-red-500 border-red-600 text-white", title: "LOS" };
+    case "offline":
+      return { cls: "bg-red-500 border-red-600 text-white", title: "Card / semua ONU offline" };
     case "idle":
       return { cls: "bg-sky-400 border-sky-500 text-white", title: "SFP terpasang, tanpa ONU" };
     default:
-      return { cls: "bg-slate-100 border-slate-200 text-slate-400", title: "Kosong" };
+      return { cls: "bg-slate-100 border-slate-200 text-slate-400", title: "Belum terbaca" };
   }
 }
 
@@ -116,7 +119,7 @@ function EmptyBay({ slot }: { slot: number }) {
   return (
     <div className="flex min-h-[96px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-[#e5eeea] bg-[#f7faf9] p-2.5">
       <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-500">S{slot}</span>
-      <span className="mt-1 text-[10px] text-[#a8bcb2]">Slot kosong</span>
+      <span className="mt-1 text-[10px] text-[#a8bcb2]">Belum terdeteksi</span>
     </div>
   );
 }
@@ -125,9 +128,9 @@ function Legend() {
   const items = [
     { c: "bg-emerald-500", l: "Online / Running" },
     { c: "bg-amber-500", l: "Standby" },
-    { c: "bg-red-500", l: "LOS / Offline" },
+    { c: "bg-red-500", l: "Offline / LOS terkonfirmasi" },
     { c: "bg-sky-400", l: "SFP tanpa ONU" },
-    { c: "bg-slate-200", l: "Kosong" },
+    { c: "bg-slate-200", l: "Belum terbaca" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#607067]">
@@ -155,6 +158,7 @@ export function ChassisView({ olts, loading, error }: { olts: OLT[]; loading?: b
   const [data, setData] = useState<Chassis | null>(null);
   const [fetching, setFetching] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!selectedID && olts.length > 0) setSelectedID(olts[0].id);
@@ -162,21 +166,35 @@ export function ChassisView({ olts, loading, error }: { olts: OLT[]; loading?: b
 
   const load = useCallback(async () => {
     if (!selectedID) return;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const timer = setTimeout(() => controller.abort(), 28000);
     setFetching(true);
     setLoadError(null);
     try {
-      const res = await clientAPI<Chassis>(`/api/v1/olts/${selectedID}/chassis`);
+      const res = await clientAPI<Chassis>(`/api/v1/olts/${selectedID}/chassis`, { signal: controller.signal, timeoutMs: 28000 });
+      if (requestRef.current !== controller || controller.signal.aborted) return;
       setData(res);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Gagal memuat perangkat OLT.");
-      setData(null);
+      if (requestRef.current !== controller) return;
+      setLoadError(controller.signal.aborted ? "Timeout membaca chassis. Snapshot terakhir belum diperbarui." : e instanceof Error ? e.message : "Gagal memuat perangkat OLT.");
     } finally {
-      setFetching(false);
+      clearTimeout(timer);
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setFetching(false);
+      }
     }
   }, [selectedID]);
 
   useEffect(() => {
+    setData(null);
     void load();
+    return () => {
+      requestRef.current?.abort();
+      requestRef.current = null;
+    };
   }, [load]);
 
   const bays = useMemo(() => {
@@ -203,7 +221,8 @@ export function ChassisView({ olts, loading, error }: { olts: OLT[]; loading?: b
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-sm font-semibold text-[#10251d]">OLT:</label>
         <select
-          className="rounded-md border border-[#d7dfda] bg-white px-3 py-1.5 text-sm"
+          aria-label="Pilih OLT"
+          className="max-w-full rounded-md border border-[#d7dfda] bg-white px-3 py-1.5 text-sm"
           value={selectedID ?? ""}
           onChange={(e) => setSelectedID(e.target.value)}
         >
@@ -222,10 +241,12 @@ export function ChassisView({ olts, loading, error }: { olts: OLT[]; loading?: b
 
       {loadError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{loadError}</div>}
 
+      {data && <ChassisFrontPanel key={selectedID} data={data} />}
+
       {fetching && !data ? (
         <ChassisSkeleton />
       ) : data ? (
-        <div className="rounded-xl border border-[#e5eeea] bg-white p-4 shadow-sm">
+        <div className="min-w-0 py-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Server size={18} className="text-[#096b4c]" />

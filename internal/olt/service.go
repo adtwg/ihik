@@ -149,6 +149,7 @@ type Service struct {
 	cliManager    *ztecli.Manager
 	healthMu      sync.Mutex
 	healthCache   map[string]healthCacheEntry
+	healthRefresh sync.Map
 }
 
 type healthCacheEntry struct {
@@ -294,14 +295,15 @@ func (service *Service) connect(ctx context.Context, tenantID, id string) (*gosn
 	if err != nil {
 		return nil, nil, err
 	}
-	session, err := zte.Connect(creds)
+	session, err := zte.ConnectContext(ctx, creds)
 	if err != nil {
 		_ = service.repository.RecordStatus(ctx, tenantID, id, truncate(err.Error()))
 		return nil, nil, fmt.Errorf("%w: %s", ErrUnreachable, err.Error())
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = session.Conn.Close() })
 	cleanup := func() {
+		stopCancel()
 		session.Conn.Close()
-		_ = service.repository.RecordStatus(ctx, tenantID, id, "")
 	}
 	return session, cleanup, nil
 }
@@ -692,8 +694,7 @@ func (service *Service) DeleteONUHybrid(ctx context.Context, tenantID, id, index
 }
 
 // GetONUConfigDetail mengambil detail ONU via SNMP terlebih dahulu.
-// Data deep (tcont/gemport/service-port) hanya dari CLI dan tidak diisi di sini
-// karena CLI serial/berat. Fallback ke CLI hanya jika SNMP tidak mengembalikan data.
+// Deep-config berasal dari cache/refresh background; hanya forceCLI menunggu CLI.
 func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, index, pon string, onuID int, forceCLI bool) (*ONUConfigDetail, map[string]string, error) {
 	// Index asli dari FE = otoritatif: decode pon/onuID langsung darinya agar
 	// tidak bergantung label onu_number DB yang bisa basi/duplikat.
@@ -730,6 +731,9 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, in
 		log.Printf("LoadONUDetailCache %s error: %v", cacheKey, cacheErr)
 	}
 	cacheFresh := cached != nil && time.Since(cachedAt) < 5*time.Minute
+	if forceCLI {
+		return service.ProbeONUConfigDetailAndCache(ctx, tenantID, id, p, oid, cacheKey)
+	}
 
 	// SNMP fast path untuk data dasar + optical.
 	snmp, snmpErr := service.fetchONUDetailSNMP(ctx, tenantID, id, p, oid, realIndex)
@@ -774,7 +778,10 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, in
 		meta := map[string]string{"method": "snmp_snapshot"}
 
 		// VLAN/service-port via BP MIB (best-effort, tidak memblokir bila kosong).
-		if vlans, ports, spErr := service.fetchONUServicePortsSNMP(ctx, tenantID, id, p, oid); spErr == nil {
+		servicePortCtx, cancelServicePorts := context.WithTimeout(ctx, time.Second)
+		vlans, ports, spErr := service.fetchONUServicePortsSNMP(servicePortCtx, tenantID, id, p, oid)
+		cancelServicePorts()
+		if spErr == nil {
 			if len(ports) > 0 {
 				detail.ServicePorts = ports
 			}
@@ -793,11 +800,6 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, in
 			return detail, meta, nil
 		}
 
-		// CLI detail hanya dieksekusi saat user eksplisit forceCLI, karena CLI per-ONU lambat
-		// dan tidak boleh otomatis background agar tidak memblokir/membebani OLT.
-		if forceCLI && !cacheFresh {
-			return service.ProbeONUConfigDetailAndCache(ctx, tenantID, id, p, oid, cacheKey)
-		}
 		// Cache basi: tampilkan config lama dulu (lebih baik daripada kosong),
 		// lalu refresh deep-config via CLI di background (non-blocking, anti-duplikat).
 		if cached != nil {
@@ -810,7 +812,7 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, in
 		return detail, meta, nil
 	}
 
-	log.Printf("GetONUConfigDetail SNMP failed for %s:%d, falling back to CLI: %v", p, oid, snmpErr)
+	log.Printf("GetONUConfigDetail SNMP failed for %s:%d, returning cached snapshot: %v", p, oid, snmpErr)
 
 	// Cache fresh cukup; return tanpa CLI lagi.
 	if cacheFresh {
@@ -831,9 +833,6 @@ func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, in
 	}
 
 	// SNMP gagal. Cache tidak fresh. Hanya forceCLI yang trigger CLI lengkap.
-	if forceCLI {
-		return service.ProbeONUConfigDetailAndCache(ctx, tenantID, id, p, oid, cacheKey)
-	}
 	// Snapshot dari cache full-sync agar panel tidak kosong; deep-config di background.
 	fallback := &ONUConfigDetail{
 		PONPort:   p,
@@ -873,13 +872,13 @@ func (service *Service) backgroundFetchONUConfigDetail(tenantID, oltID, pon stri
 	}
 }
 
-// detailFetchInFlight mencegah probe CLI ganda untuk ONU yang sama.
+// detailFetchInFlight membatasi satu pekerjaan CLI background per tenant/OLT.
 var detailFetchInFlight sync.Map
 
 // scheduleDetailConfigFetch menarik deep-config CLI di background sekali per ONU
 // agar panel detail tidak blocking dan OLT tidak kebanjiran sesi CLI.
 func (service *Service) scheduleDetailConfigFetch(tenantID, oltID, pon string, onuID int, index string) {
-	key := tenantID + "/" + oltID + "/" + index
+	key := tenantID + "/" + oltID
 	if _, running := detailFetchInFlight.LoadOrStore(key, true); running {
 		return
 	}
@@ -1137,7 +1136,12 @@ func (service *Service) SyncONULiveByRef(ctx context.Context, tenantID, id, inde
 // scheduleCLIRefresh menjalankan probe CLI di goroutine terpisah dengan timeout
 // sendiri, lalu menyimpan hasil ke cache DB. Tidak memblokir request pemanggil.
 func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, index string) {
+	key := tenantID + "/" + id
+	if _, running := detailFetchInFlight.LoadOrStore(key, true); running {
+		return
+	}
 	go func() {
+		defer detailFetchInFlight.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		detail, _, detailErr := service.ProbeONUConfigCLI(ctx, tenantID, id, pon, onuID)
@@ -1197,7 +1201,6 @@ func (service *Service) scheduleCLIRefresh(tenantID, id, pon string, onuID int, 
 		}
 	}()
 }
-
 
 // Create menambahkan OLT baru.
 func (service *Service) Create(ctx context.Context, tenantID string, input SaveInput) (OLT, error) {
@@ -1475,12 +1478,17 @@ func (service *Service) ListONUSPaged(ctx context.Context, tenantID, id string, 
 // Untuk firmware lama (V2.1.0), OID card/temp/fan/PSU dari .1082.10 sering
 // tidak tersedia dan walk timeout; kita ambil SFP-only sebagai fallback.
 func (service *Service) GetHealth(ctx context.Context, tenantID, id string) (*zte.OltHealth, error) {
+	cacheKey := tenantID + "/" + id
 	service.healthMu.Lock()
-	cached, ok := service.healthCache[id]
+	cached, ok := service.healthCache[cacheKey]
 	service.healthMu.Unlock()
 	if ok && time.Since(cached.at) < 15*time.Second {
 		return cached.data, nil
 	}
+	if _, running := service.healthRefresh.LoadOrStore(cacheKey, true); running {
+		return nil, fmt.Errorf("%w: pembacaan health OLT sedang berjalan", ErrUnreachable)
+	}
+	defer service.healthRefresh.Delete(cacheKey)
 
 	session, cleanup, err := service.connect(ctx, tenantID, id)
 	if err != nil {
@@ -1512,13 +1520,13 @@ func (service *Service) GetHealth(ctx context.Context, tenantID, id string) (*zt
 			return nil, fmt.Errorf("%w: %s", ErrUnreachable, err.Error())
 		}
 		service.healthMu.Lock()
-		service.healthCache[id] = healthCacheEntry{data: health, at: time.Now()}
+		service.healthCache[cacheKey] = healthCacheEntry{data: health, at: time.Now()}
 		service.healthMu.Unlock()
 		return health, nil
 	}
 
 	service.healthMu.Lock()
-	if prev, okHit := service.healthCache[id]; okHit && prev.data != nil {
+	if prev, okHit := service.healthCache[cacheKey]; okHit && prev.data != nil {
 		elapsed := time.Since(prev.at).Seconds()
 		if elapsed >= 2 {
 			prevByLabel := map[string]zte.SfpInfo{}
@@ -1539,7 +1547,7 @@ func (service *Service) GetHealth(ctx context.Context, tenantID, id string) (*zt
 			}
 		}
 	}
-	service.healthCache[id] = healthCacheEntry{data: health, at: time.Now()}
+	service.healthCache[cacheKey] = healthCacheEntry{data: health, at: time.Now()}
 	service.healthMu.Unlock()
 	return health, nil
 }

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"isp-billing/internal/ztecli"
 )
@@ -35,6 +36,14 @@ var (
 // trafik per-ONU lewat SSH/Telnet CLI. Mengembalikan hasil pertama yang
 // berhasil diparse, plus map raw output semua command untuk diagnosis.
 func (service *Service) ProbeONUTrafficCLI(ctx context.Context, tenantID, id, ponPort string, onuID int) (*ONUTrafficSample, map[string]string, error) {
+	return service.probeONUTraffic(ctx, tenantID, id, ponPort, onuID, true)
+}
+
+func (service *Service) ProbeONUTrafficSNMP(ctx context.Context, tenantID, id, ponPort string, onuID int) (*ONUTrafficSample, map[string]string, error) {
+	return service.probeONUTraffic(ctx, tenantID, id, ponPort, onuID, false)
+}
+
+func (service *Service) probeONUTraffic(ctx context.Context, tenantID, id, ponPort string, onuID int, allowCLI bool) (*ONUTrafficSample, map[string]string, error) {
 	ponPort = sanitizePON(ponPort)
 	if ponPort == "" || onuID < 1 || onuID > 128 {
 		return nil, nil, ErrInvalidInput
@@ -43,14 +52,22 @@ func (service *Service) ProbeONUTrafficCLI(ctx context.Context, tenantID, id, po
 	raws := map[string]string{"method": "snmp"}
 
 	// SNMP fast path: baca counter per-ONU tanpa sesi CLI serial.
-	snmpSample, snmpErr := service.fetchONUTrafficSNMP(ctx, tenantID, id, ponPort, onuID)
+	snmpCtx, cancelSNMP := context.WithTimeout(ctx, 6*time.Second)
+	snmpSample, snmpErr := service.fetchONUTrafficSNMP(snmpCtx, tenantID, id, ponPort, onuID)
+	cancelSNMP()
 	if snmpErr == nil && snmpSample != nil {
 		snmpSample.PONPort = ponPort
 		snmpSample.ONUID = onuID
 		snmpSample.Method = "snmp"
 		return snmpSample, raws, nil
 	}
+	if snmpErr == nil {
+		snmpErr = fmt.Errorf("%w: counter SNMP kosong", ErrUnreachable)
+	}
 	raws["snmp_error"] = snmpErr.Error()
+	if !allowCLI || ctx.Err() != nil {
+		return nil, raws, snmpErr
+	}
 
 	log.Printf("ProbeONUTrafficCLI SNMP failed for %s:%d, fallback CLI: %v", ponPort, onuID, snmpErr)
 

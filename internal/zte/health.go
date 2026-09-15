@@ -159,7 +159,7 @@ func CollectHealth(session HealthWalker) (*OltHealth, error) {
 	cardTemp := walkMap(session, oidCardTemp)
 
 	// Gabungkan per slot dari suffix OID terakhir
-	slots := unionKeys(cardCPU, cardMem, cardTemp, cardStatus)
+	slots := unionKeys(cardType, cardCPU, cardMem, cardTemp, cardStatus)
 	for _, key := range slots {
 		slotNum := lastOIDSegment(key)
 		info := CardInfo{Slot: atoiSafe(slotNum)}
