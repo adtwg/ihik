@@ -1,9 +1,9 @@
 "use client";
 
-// Panel detail trafik + konfigurasi per-ONU via CLI (expand row).
+// Panel detail dan konfigurasi per-ONU (expand row).
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import { clientAPI } from "@/lib/api/client";
 import type {
   OLT,
@@ -14,10 +14,6 @@ import type {
 } from "@/lib/olts/types";
 import { normalizeStatusKey, ONLINE_STATUS } from "@/lib/olts/status";
 
-type BpsPoint = { t: number; in_bps: number; out_bps: number };
-type CLISample = { in_octets: number; out_octets: number; method?: string };
-type CLIResp = { sample?: CLISample };
-type CounterPoint = { t: number; in_octets: number; out_octets: number };
 type DetailResp = { sample?: ONUConfigDetail; raws?: Record<string, string> };
 type ConfigMode = "edit" | "add";
 type ConfigTarget = "name" | "description" | "tcont" | "gemport" | "service_port" | "wan_ip" | "auto_config";
@@ -28,29 +24,9 @@ type WanAuthModeInput = "auto" | "pap" | "chap";
 type ServicePortRow = NonNullable<ONUConfigDetail["service_ports"]>[number];
 type WanIPRow = NonNullable<ONUConfigDetail["wan_ips"]>[number];
 
-function fmtBps(v?: number): string {
-  if (!v) return "—";
-  if (v >= 1e9) return `${(v / 1e9).toFixed(2)} Gbps`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)} Mbps`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)} Kbps`;
-  return `${Math.round(v)} bps`;
-}
-
-function fmt(v: number): string {
-  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}G`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return `${Math.round(v)}`;
-}
-
 function fmtDbm(v?: number): string {
   if (!v) return "—";
   return `${v.toFixed(2)} dBm`;
-}
-
-function hhmm(unixSec: number): string {
-  const d = new Date(unixSec * 1000);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function joinList(values?: Array<string | number>): string {
@@ -163,39 +139,15 @@ function resolveOnuRef(onu: ONU): { pon: string; onuID: number } | null {
   return null;
 }
 
-const W = 560;
-const H = 140;
-const PAD_L = 40;
-const PAD_B = 18;
-const PAD_T = 8;
-
-function Sparkline({ points, color }: { points: { x: number; y: number }[]; color: string }) {
-  if (points.length < 2) return null;
-  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const area = `${d} L${points[points.length - 1].x.toFixed(1)},${(H - PAD_B).toFixed(1)} L${points[0].x.toFixed(1)},${(H - PAD_B).toFixed(1)} Z`;
-  return (
-    <>
-      <path d={area} fill={color} opacity={0.07} />
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" />
-    </>
-  );
-}
-
-export function OnuTrafficDetail({
+export function OnuConfigDetail({
   olt,
   onu,
-  live,
   onLiveDetail,
 }: {
   olt: OLT;
   onu: ONU;
-  live: boolean;
   onLiveDetail?: (patch: Partial<ONU>) => void;
 }) {
-  const [series, setSeries] = useState<BpsPoint[]>([]);
-  const lastCounter = useRef<CounterPoint | null>(null);
-  const [trafficSource, setTrafficSource] = useState("-");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ONUConfigDetail | null>(null);
   const [detailEnriching, setDetailEnriching] = useState(false);
@@ -242,58 +194,8 @@ export function OnuTrafficDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const ref = useMemo(() => resolveOnuRef(onu), [onu.index, onu.onu_number]);
 
-  const trafficController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const configRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const loadTraffic = useCallback(async (silent = false) => {
-    if (trafficController.current) return;
-    if (!ref) {
-      setError("Format index ONU tidak dikenali untuk probe CLI.");
-      return;
-    }
-    if (!silent) setLoading(true);
-    setError(null);
-    const controller = new AbortController();
-    trafficController.current = controller;
-    const timer = setTimeout(() => controller.abort(), 15000);
-    try {
-      const q = new URLSearchParams({ pon: ref.pon, onu_id: String(ref.onuID) });
-      if (silent) q.set("snmp_only", "1");
-      const res = await clientAPI<CLIResp>(`/api/v1/olts/${olt.id}/onu-traffic-cli?${q.toString()}`, { signal: controller.signal });
-      if (trafficController.current !== controller || controller.signal.aborted) return;
-      const sample = res.sample;
-      if (!sample) throw new Error("Counter CLI kosong.");
-
-      const now = Math.floor(Date.now() / 1000);
-      const previous = lastCounter.current;
-      if (previous && now > previous.t) {
-        const inDelta = sample.in_octets >= previous.in_octets ? sample.in_octets - previous.in_octets : 0;
-        const outDelta = sample.out_octets >= previous.out_octets ? sample.out_octets - previous.out_octets : 0;
-        const seconds = now - previous.t;
-        const point = { t: now, in_bps: (inDelta * 8) / seconds, out_bps: (outDelta * 8) / seconds };
-        setSeries(rows => [...rows.filter(row => row.t !== now), point].slice(-120));
-      }
-      lastCounter.current = { t: now, in_octets: sample.in_octets, out_octets: sample.out_octets };
-      setTrafficSource(sample.method?.startsWith("snmp") ? "SNMP" : sample.method === "cli" ? "CLI" : "-");
-    } catch (e) {
-      if (trafficController.current !== controller) return;
-      const isAbort = e instanceof Error && (e.name === "AbortError" || /aborted/i.test(e.message));
-      if (isAbort && (controller.signal as AbortSignal).aborted) {
-        setError("Timeout membaca trafik ONU. OLT sedang sibuk, coba lagi sebentar.");
-      } else if (e && typeof e === "object" && "message" in e) {
-        setError(String((e as Error).message));
-      } else {
-        setError("Gagal memuat trafik CLI.");
-      }
-    } finally {
-      clearTimeout(timer);
-      if (trafficController.current === controller) {
-        trafficController.current = null;
-        if (!silent) setLoading(false);
-      }
-    }
-  }, [olt.id, ref]);
 
   // Batas auto-refresh menunggu deep-config background (hindari loop bila CLI gagal terus).
   const configRefreshLeft = useRef(3);
@@ -362,10 +264,6 @@ export function OnuTrafficDetail({
   useEffect(() => {
     configRefreshLeft.current = 3;
     setDetail(null);
-    setSeries([]);
-    lastCounter.current = null;
-    setTrafficSource("-");
-    setLoading(false);
     setDetailEnriching(false);
     const timer = setTimeout(() => void loadDetailRef.current(), 50);
     return () => {
@@ -373,22 +271,8 @@ export function OnuTrafficDetail({
       if (configRefreshTimer.current) clearTimeout(configRefreshTimer.current);
       detailController.current?.abort();
       detailController.current = null;
-      trafficController.current?.abort();
-      trafficController.current = null;
     };
   }, [olt.id, onu.index]);
-
-  useEffect(() => {
-    // Trafik jalan otomatis selama panel terbuka; berhenti saat tab tersembunyi
-    // dan tidak menumpuk request bila OLT lambat merespons.
-    const tick = () => {
-      if (document.hidden) return;
-      void loadTraffic(true);
-    };
-    tick();
-    const timer = setInterval(tick, live ? 5000 : 10000);
-    return () => clearInterval(timer);
-  }, [live, loadTraffic]);
 
   const isListTarget = useCallback((target: ConfigTarget) => (
     target === "tcont" || target === "gemport" || target === "service_port" || target === "wan_ip"
@@ -870,23 +754,6 @@ export function OnuTrafficDetail({
     setWanRespondTraceroute(row.respond_traceroute ?? true);
   }, []);
 
-  const plotW = W - PAD_L - 8;
-  const plotH = H - PAD_B - PAD_T;
-  const last = series[series.length - 1];
-
-  const points = series.length >= 2 ? (() => {
-    const maxV = Math.max(1, ...series.map((r) => Math.max(r.in_bps, r.out_bps)));
-    const t0 = series[0].t;
-    const t1 = series[series.length - 1].t;
-    const span = Math.max(1, t1 - t0);
-    const toPts = (key: "in_bps" | "out_bps") =>
-      series.map((r) => ({
-        x: PAD_L + ((r.t - t0) / span) * plotW,
-        y: PAD_T + plotH - (r[key] / maxV) * plotH,
-      }));
-    return { in: toPts("in_bps"), out: toPts("out_bps"), maxV };
-  })() : null;
-
   const inputCls = "rounded border border-[#d5e2dc] bg-white px-2 py-1 text-xs text-[#1f2f27] focus:border-[#2c7a5b] focus:outline-none";
   const btnCls = "inline-flex items-center justify-center rounded border border-[#d5e2dc] bg-white px-2 py-1 text-xs font-medium text-[#44554d] hover:border-[#2c7a5b] disabled:opacity-50";
   const configTargetLabel: Record<ConfigTarget, string> = {
@@ -927,19 +794,7 @@ export function OnuTrafficDetail({
   return (
     <div className="rounded-lg border border-[#e5eeea] bg-white p-3 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 text-xs text-[#607067]">
-            <Activity size={14} className="text-emerald-600" />
-            <span className="font-medium text-[#10251d]">Unduh</span>
-            <span className="font-mono font-semibold text-emerald-700">{fmtBps(last?.in_bps ?? onu.in_bps)}</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-xs text-[#607067]">
-            <Activity size={14} className="text-sky-600" />
-            <span className="font-medium text-[#10251d]">Unggah</span>
-            <span className="font-mono font-semibold text-sky-700">{fmtBps(last?.out_bps ?? onu.out_bps)}</span>
-          </span>
-          <span className="rounded-full border border-[#d8e7df] bg-[#f6faf8] px-2 py-0.5 text-[10px] font-semibold text-[#4f645a]">Sumber: {trafficSource}</span>
-        </div>
+        <h3 className="text-sm font-semibold text-[#10251d]">Detail & konfigurasi ONU</h3>
         <div className="flex items-center gap-1.5">
           <button
             className={btnCls}
@@ -967,31 +822,6 @@ export function OnuTrafficDetail({
       )}
       
 
-      {points ? (
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 180 }}>
-          {[0.25, 0.5, 0.75, 1].map((f) => {
-            const y = PAD_T + plotH - f * plotH;
-            return (
-              <g key={f}>
-                <line x1={PAD_L} y1={y} x2={W - 8} y2={y} stroke="#eef4f1" strokeWidth="1" />
-                <text x={PAD_L - 4} y={y + 3} textAnchor="end" fontSize="8" fill="#8aa096">{fmt(points.maxV * f)}</text>
-              </g>
-            );
-          })}
-          <Sparkline points={points.in} color="#059669" />
-          <Sparkline points={points.out} color="#0284c7" />
-          {series.map((r, i) =>
-            i % Math.max(1, Math.ceil(series.length / 6)) === 0 ? (
-              <text key={r.t} x={PAD_L + ((r.t - series[0].t) / (series[series.length - 1].t - series[0].t || 1)) * plotW} y={H - 5} textAnchor="middle" fontSize="8" fill="#8aa096">{hhmm(r.t)}</text>
-            ) : null
-          )}
-        </svg>
-      ) : (
-        <div className="flex h-24 items-center justify-center rounded bg-[#f6faf8] text-xs text-[#8aa096]">
-          Belum ada sampel trafik.
-        </div>
-      )}
-
       <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
         <div className="rounded-lg border border-[#e5eeea] bg-[#f8fbfa] p-2">
           <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa096]">Konfigurasi ONU</div>
@@ -1012,12 +842,10 @@ export function OnuTrafficDetail({
         </div>
 
         <div className="rounded-lg border border-[#e5eeea] bg-[#f8fbfa] p-2">
-          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa096]">Profile & Rate</div>
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8aa096]">Profile & Informasi</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[#44554d]">
             <span className="text-[#8aa096]">Upstream Profile</span><span className="truncate" title={joinList((detail?.upstream_profiles || []).map((x) => typeof x === "string" ? x : String(x)))}>{joinList((detail?.upstream_profiles || []).map((x) => typeof x === "string" ? x : String(x)))}</span>
             <span className="text-[#8aa096]">Downstream Profile</span><span className="truncate" title={joinList((detail?.downstream_profiles || []).map((x) => typeof x === "string" ? x : String(x)))}>{joinList((detail?.downstream_profiles || []).map((x) => typeof x === "string" ? x : String(x)))}</span>
-            <span className="text-[#8aa096]">Upstream Rate</span><span className="font-mono text-sky-700">{fmtBps(detail?.upstream_bps ?? onu.in_bps)}</span>
-            <span className="text-[#8aa096]">Downstream Rate</span><span className="font-mono text-emerald-700">{fmtBps(detail?.downstream_bps ?? onu.out_bps)}</span>
             <span className="text-[#8aa096]">Distance</span><span className="font-mono">{detail?.distance_m ? `${Math.round(detail.distance_m)} m` : (onu.distance_m ? `${Math.round(onu.distance_m)} m` : "—")}</span>
             <span className="text-[#8aa096]">Warnings</span><span className="truncate" title={joinList((detail?.warnings || []).map((x) => typeof x === "string" ? x : String(x)))}>{joinList((detail?.warnings || []).map((x) => typeof x === "string" ? x : String(x)))}</span>
           </div>

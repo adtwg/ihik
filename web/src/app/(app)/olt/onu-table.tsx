@@ -1,10 +1,9 @@
 "use client";
 
-// Tabel ONU — expandable row: tiap baris punya panah, klik untuk detail
-// trafik realtime + chart intraday. Trafik tidak ditampilkan semua ONU.
+// Detail/config berada di expandable row; trafik dimuat hanya dalam popup aksi.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronRightIcon, Power, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronRightIcon, Power, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { clientAPI } from "@/lib/api/client";
 import type {
   OLT,
@@ -15,7 +14,8 @@ import type {
 } from "@/lib/olts/types";
 import { normalizeStatusKey } from "@/lib/olts/status";
 import { OnuStatsBar, type OnuStats } from "./onu-stats";
-import { OnuTrafficDetail } from "./onu-traffic-detail";
+import { OnuConfigDetail } from "./onu-traffic-detail";
+import { OnuDailyChart } from "./onu-daily-chart";
 import { ProvisionPanel } from "./provision-panel";
 
 function fmtDbm(v: number): string {
@@ -139,9 +139,12 @@ export function OnuTable({ olt }: { olt: OLT }) {
   const [liveTraffic, setLiveTraffic] = useState(false);
   const [stats, setStats] = useState<OnuStats | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [trafficONU, setTrafficONU] = useState<{ oltID: string; onu: ONU } | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const [autoBackfillBusy, setAutoBackfillBusy] = useState(false);
+
+  useEffect(() => { setTrafficONU(null); }, [olt.id]);
 
   const ponOptions = useMemo(() => {
     const rows = stats?.pon_ports ?? [];
@@ -564,7 +567,7 @@ export function OnuTable({ olt }: { olt: OLT }) {
               {([
                 ["index", "ONU"], ["name", "Nama"], [null, "Serial"],
                 ["status", "Status"], ["rx", "Rx (dBm)"], [null, "Tx (dBm)"],
-                [null, "Jarak"], [null, ""],
+                [null, "Jarak"], [null, "Aksi"],
               ] as const).map(([key, label]) => (
                 <th key={label} className={th}>
                   {key ? (
@@ -611,6 +614,11 @@ export function OnuTable({ olt }: { olt: OLT }) {
                     <td className={td}>
                       <div className="flex items-center gap-0.5">
                         <button
+                          className="rounded-md p-1.5 text-[#607067] transition-colors hover:bg-[#eef7f3] hover:text-[#1d5c43]"
+                          title="Cek trafik ONU" aria-label={`Cek trafik ONU ${onu.onu_number || onu.index}`}
+                          onClick={() => setTrafficONU({ oltID: olt.id, onu })}
+                        ><Activity size={16} /></button>
+                        <button
                           className="inline-flex items-center gap-1 rounded-md border border-[#d5e2dc] bg-white px-2 py-1 text-[11px] font-semibold text-[#1d5c43] transition-colors hover:border-[#2c7a5b] hover:bg-[#eef7f3] disabled:opacity-40"
                           title="Sync ONU ini (status + redaman + jarak)"
                           disabled={actionBusy === `${onu.index}:sync`}
@@ -640,10 +648,9 @@ export function OnuTable({ olt }: { olt: OLT }) {
                   {isOpen && (
                     <tr key={`${onu.index}-detail`} className="bg-[#f8fbfa]">
                       <td colSpan={8} className="px-3 py-3">
-                        <OnuTrafficDetail
+                        <OnuConfigDetail
                           olt={olt}
                           onu={onu}
-                          live={liveTraffic}
                           onLiveDetail={(patch) => {
                             setData((prev) => ({
                               ...prev,
@@ -665,6 +672,9 @@ export function OnuTable({ olt }: { olt: OLT }) {
       </div>
 
       {/* Pagination */}
+      {trafficONU?.oltID === olt.id && <OnuDailyChart key={`${olt.id}/${trafficONU.onu.index}`}
+        olt={olt} onu={trafficONU.onu} reference={resolveOnuRef(trafficONU.onu)} onClose={() => setTrafficONU(null)} />}
+
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-[#607067]">
         <span>{data.total.toLocaleString("id-ID")} ONU · halaman {page}/{pageCount}{loading ? " · memuat…" : ""}</span>
         <div className="flex items-center gap-1">

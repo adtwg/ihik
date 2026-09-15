@@ -9,6 +9,41 @@ Keamanan edit/sync: lihat [olt-edit-sync-safety.md](olt-edit-sync-safety.md).
 
 ---
 
+## Pembaruan 2026-09-15: pisahkan detail dan popup trafik ONU
+
+- Expand detail hanya memuat detail/config ONU, tanpa polling, grafik, atau
+  angka trafik upstream/downstream. Profil konfigurasi tetap tersedia.
+- Tombol ikon `Cek trafik ONU` pada kolom Aksi membuka popup tersendiri.
+  Popup memuat riwayat intraday dan probe live, dengan rentang 5/15/60/180
+  menit, jeda/lanjutkan, refresh, serta pemilih sumber SNMP atau fallback CLI.
+- Live membutuhkan dua counter valid. Counter reset, pergantian metode,
+  selang lebih dari 60 detik, dan integer di luar presisi JavaScript tidak
+  dijadikan sampel nol. Unduh menggunakan OLT output/Tx; unggah input/Rx.
+- Polling dijadwalkan setelah request sebelumnya selesai: 5 detik SNMP atau
+  15 detik fallback CLI, dengan backoff error sampai 30 detik. Tab tersembunyi
+  melewati probe. Jeda/close/pergantian OLT membatalkan request; refresh saat
+  dijeda hanya memuat riwayat. Sumber aktual mengikuti `sample.method`.
+- Error live (termasuk HTTP 502) hanya tampil dalam popup. Riwayat/sampel
+  sebelumnya tetap terlihat dan tidak dianggap bacaan live terbaru.
+- SNMP `SampleTrafficONU` sekarang mensyaratkan dua OID counter yang tepat
+  dan tipe Counter32/Counter64. Respons NoSuchInstance, parsial, packet error,
+  atau nil memicu fallback 32-bit; hasil yang tetap tidak lengkap menjadi
+  error, bukan trafik nol palsu.
+
+Validasi: tes Go `./internal/olt ./internal/zte ./internal/ztecli
+./internal/httpapi`, lima tes Node API/traffic, dan typecheck frontend lulus.
+Browser dengan fixture loopback: detail tidak memanggil endpoint trafik;
+popup menampilkan dua garis dan live setelah dua sampel; jeda menghentikan
+probe; 502 mempertahankan riwayat; Escape/tombol tutup menutup dialog;
+counter request tetap setelah close; buka ulang setelah reload berhasil.
+Screenshot desktop 1440px dan mobile 390px diperiksa; grafik mobile dapat
+digulir horizontal tanpa membuat dialog melampaui layar.
+
+Belum diverifikasi pada OLT/VPS produksi. Penyebab spesifik HTTP 502 di VPS
+tidak dapat dipastikan dari fixture; firmware yang tidak menyediakan counter
+masih dapat menghasilkan error live. Build produksi tidak dijalankan untuk
+perubahan ini. Catatan di atas menggantikan alur trafik dalam detail di bawah.
+
 ## Pembaruan 2026-09-15: blocking dan tampak depan chassis
 
 Bagian ini menggantikan catatan timeout/geometri/status di riwayat lama bawah.

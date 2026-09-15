@@ -996,49 +996,43 @@ func SampleTrafficPrivateONU(session *gosnmp.GoSNMP, index string) (TrafficSampl
 // Firmware V2.1.0 produksi TIDAK melayani GET ifHCInOctets (64-bit) —
 // fallback ke ifInOctets/ifOutOctets 32-bit (wrap ditangani SQL).
 func SampleTrafficONU(session *gosnmp.GoSNMP, ifIndex string) (TrafficSample, error) {
-	var sample TrafficSample
-	result, err := session.Get([]string{
-		TrafficHCIn + "." + ifIndex,
-		TrafficHCOut + "." + ifIndex,
-	})
-	if err == nil {
-		hits := 0
-		for _, v := range result.Variables {
-			name := strings.TrimPrefix(v.Name, ".")
-			root := strings.TrimPrefix(TrafficHCIn, ".")
-			if strings.HasPrefix(name, root+".") {
-				sample.InOctets = gosnmp.ToBigInt(v.Value).Uint64()
-			} else {
-				sample.OutOctets = gosnmp.ToBigInt(v.Value).Uint64()
+	return sampleTrafficONU(session.Get, ifIndex)
+}
+
+func sampleTrafficONU(get func([]string) (*gosnmp.SnmpPacket, error), ifIndex string) (TrafficSample, error) {
+	for attempt, roots := range [][2]string{{TrafficHCIn, TrafficHCOut}, {TrafficInOctets, TrafficOutOctets}} {
+		oids := []string{roots[0] + "." + ifIndex, roots[1] + "." + ifIndex}
+		packet, err := get(oids)
+		if err != nil {
+			if attempt == 1 {
+				return TrafficSample{}, err
 			}
-			hits++
+			continue
 		}
-		if hits == 2 {
-			return sample, nil
+		if packet == nil || packet.Error != gosnmp.NoError {
+			continue
+		}
+		var values [2]uint64
+		var found [2]bool
+		for _, variable := range packet.Variables {
+			if variable.Type != gosnmp.Counter64 && variable.Type != gosnmp.Counter32 {
+				continue
+			}
+			value := gosnmp.ToBigInt(variable.Value)
+			if variable.Value == nil || value.Sign() < 0 || !value.IsUint64() {
+				continue
+			}
+			for direction, oid := range oids {
+				if strings.TrimPrefix(variable.Name, ".") == strings.TrimPrefix(oid, ".") {
+					values[direction], found[direction] = value.Uint64(), true
+				}
+			}
+		}
+		if found[0] && found[1] {
+			return TrafficSample{InOctets: values[0], OutOctets: values[1]}, nil
 		}
 	}
-	result, err = session.Get([]string{
-		TrafficInOctets + "." + ifIndex,
-		TrafficOutOctets + "." + ifIndex,
-	})
-	if err != nil {
-		return TrafficSample{}, err
-	}
-	hits := 0
-	for _, v := range result.Variables {
-		name := strings.TrimPrefix(v.Name, ".")
-		root := strings.TrimPrefix(TrafficInOctets, ".")
-		if strings.HasPrefix(name, root+".") {
-			sample.InOctets = gosnmp.ToBigInt(v.Value).Uint64()
-		} else {
-			sample.OutOctets = gosnmp.ToBigInt(v.Value).Uint64()
-		}
-		hits++
-	}
-	if hits == 0 {
-		return TrafficSample{}, fmt.Errorf("counter tidak tersedia untuk ifIndex %s", ifIndex)
-	}
-	return sample, nil
+	return TrafficSample{}, fmt.Errorf("counter tidak tersedia untuk ifIndex %s", ifIndex)
 }
 
 // WalkIfDescr membaca seluruh ifDescr untuk memetakan ifIndex ONU.
