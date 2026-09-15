@@ -61,10 +61,14 @@ function resolveOnuRef(onu: ONU): { pon: string; onuID: number } | null {
     const base = Number(parts[0]);
     const onuID = Number(parts[parts.length - 1]);
     if (Number.isFinite(base) && Number.isFinite(onuID) && base > 0xffff && onuID > 0) {
-      const shelf = Math.floor(base / 16777216) % 16;
-      const slot = Math.floor(base / 65536) % 256;
+      // Encoding ZTE .1082: 0x11 | shelf | slot | pon (slot di bits 8-15).
+      const shelf = Math.floor(base / 65536) % 256;
+      let slot = Math.floor(base / 256) % 256;
       let port = base % 256;
-      if (port === 0) port = Math.floor(base / 256) % 256;
+      if (port === 0) {
+        slot = Math.floor(base / 65536) % 256;
+        port = Math.floor(base / 256) % 256;
+      }
       if (shelf > 0 && slot > 0 && port > 0) {
         return { pon: `${shelf}/${slot}/${port}`, onuID };
       }

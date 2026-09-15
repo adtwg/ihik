@@ -416,9 +416,13 @@ func keyLoc(key string) (slot, port, id int, ok bool) {
 	if err != nil || v <= 0xFFFF {
 		return 0, 0, 0, false
 	}
-	slot = int((v >> 16) & 0xFF)
-	port = int(v & 0xFF)
-	if port == 0 {
+	// .1082: low byte = pon, slot di bits 8-15 (bits 16-23 = shelf).
+	// .1012: low byte 0 -> port di bits 8-15, slot di bits 16-23.
+	if v&0xFF != 0 {
+		slot = int((v >> 8) & 0xFF)
+		port = int(v & 0xFF)
+	} else {
+		slot = int((v >> 16) & 0xFF)
 		port = int((v >> 8) & 0xFF)
 	}
 	if len(parts) >= 2 {
@@ -514,7 +518,7 @@ func portFromIndex(index string) int {
 	if err != nil || v <= 0xFFFF {
 		return -1
 	}
-	slot := (v >> 16) & 0xFF
+	slot := (v >> 8) & 0xFF // slot di bits 8-15 (bits 16-23 = shelf)
 	port := v & 0xFF
 	if slot == 0 || port == 0 {
 		return -1
@@ -752,13 +756,16 @@ func onuStatusText(raw string) string {
 
 // onuLabel mengubah indeks internal ZTE (mis. 285278469.5) menjadi
 // lokasi port yang mudah dibaca (1/1/5:5 = shelf/slot/port: onuId).
-// gponOnuIndex = shelf<<24 | slot<<16 | tipe<<8 | port.
+// gponOnuIndex = 0x11<<24 | shelf<<16 | slot<<8 | pon — slot di bits 8-15
+// (terverifikasi hardware: slot2 -> 0x110102xx, C300 slot3 -> 0x110103xx).
+// Decode lama salah baca byte shelf sebagai slot => ONU beda slot dengan
+// pon:id sama mendapat label kembar dan detail/CLI menembak ONU lain.
 func onuLabel(index string) string {
 	parts := strings.Split(index, ".")
 	if len(parts) >= 2 {
 		if v, err := strconv.ParseInt(parts[0], 10, 64); err == nil && v > 0xFFFF {
-			shelf := (v >> 24) & 0x0F // ZTE encode 0x10|shelf (C320 → 1)
-			slot := (v >> 16) & 0xFF
+			shelf := (v >> 16) & 0xFF
+			slot := (v >> 8) & 0xFF
 			port := v & 0xFF
 			id := parts[len(parts)-1]
 			if shelf > 0 && slot > 0 && port > 0 {

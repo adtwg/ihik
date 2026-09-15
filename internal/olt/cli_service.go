@@ -1300,10 +1300,12 @@ func splitIndex(index string) (string, int, bool) {
 		if err != nil || v <= 0xFFFF {
 			return "", 0, false
 		}
-		shelf := int((v >> 24) & 0x0F)
-		slot := int((v >> 16) & 0xFF)
+		// Encoding 0x11|shelf|slot|pon: slot di bits 8-15 (bukan 16-23).
+		shelf := int((v >> 16) & 0xFF)
+		slot := int((v >> 8) & 0xFF)
 		port := int(v & 0xFF)
 		if port == 0 {
+			slot = int((v >> 16) & 0xFF)
 			port = int((v >> 8) & 0xFF)
 		}
 		onuID, err := strconv.Atoi(seg[len(seg)-1])
