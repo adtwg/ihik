@@ -237,7 +237,9 @@ export function OnuTrafficDetail({
   const [wanRespondTraceroute, setWanRespondTraceroute] = useState(true);
   const [editingWanIP, setEditingWanIP] = useState<WanIPRow | null>(null);
 
-  const ref = useMemo(() => resolveOnuRef(onu), [onu]);
+  // Dep by value (bukan identitas objek onu) agar patch baris tidak memicu refetch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const ref = useMemo(() => resolveOnuRef(onu), [onu.index, onu.onu_number]);
 
   const loadTraffic = useCallback(async (silent = false) => {
     if (!ref) {
@@ -331,12 +333,15 @@ export function OnuTrafficDetail({
     }
   }, [olt.id, onu.description, onu.distance_m, onu.index, onu.name, onu.rx_power_dbm, onu.serial_number, onu.status, onu.tx_power_dbm, onLiveDetail, ref]);
 
+  // Fetch awal SEKALI per ONU — patch baris (nama/rx) mengubah identitas prop
+  // onu dan pernah memicu refetch beruntun tanpa henti.
+  const detailFetchedFor = useRef<string | null>(null);
   useEffect(() => {
-    // Snapshot detail ringan saat expand: data dasar + cache jika sudah tersedia.
-    // TIDAK auto background CLI: CLI detail per-ONU lambat dan bisa memblokir.
+    if (detailFetchedFor.current === onu.index) return;
+    detailFetchedFor.current = onu.index;
     const id = window.setTimeout(() => void loadDetail(), 50);
     return () => window.clearTimeout(id);
-  }, [loadDetail]);
+  }, [loadDetail, onu.index]);
 
   // Anti-stack: satu request trafik berjalan pada satu waktu per panel.
   const trafficBusyRef = useRef(false);

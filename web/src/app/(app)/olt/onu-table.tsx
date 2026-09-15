@@ -95,7 +95,7 @@ function needsOpticalBackfill(onu: ONU): boolean {
 function applyOnuPatch(prev: ONU, updated: Partial<ONU>): ONU {
   const status = updated.status || prev.status;
   const showOptical = statusAllowsOpticalUI(status);
-  return {
+  const next = {
     ...prev,
     status,
     name: updated.name ?? prev.name,
@@ -104,6 +104,19 @@ function applyOnuPatch(prev: ONU, updated: Partial<ONU>): ONU {
     tx_power_dbm: showOptical ? (updated.tx_power_dbm ?? prev.tx_power_dbm ?? 0) : 0,
     distance_m: updated.distance_m ?? prev.distance_m,
   };
+  // Identitas objek dipertahankan bila tak ada nilai berubah — mencegah loop
+  // render/refetch (patch -> onu baru -> effect refire -> fetch -> patch ...).
+  if (
+    next.status === prev.status &&
+    next.name === prev.name &&
+    next.serial_number === prev.serial_number &&
+    next.rx_power_dbm === prev.rx_power_dbm &&
+    next.tx_power_dbm === prev.tx_power_dbm &&
+    next.distance_m === prev.distance_m
+  ) {
+    return prev;
+  }
+  return next;
 }
 
 const pageSizeOptions = [25, 50, 100, 200];
