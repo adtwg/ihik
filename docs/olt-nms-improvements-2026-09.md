@@ -9,6 +9,27 @@ Keamanan edit/sync: lihat [olt-edit-sync-safety.md](olt-edit-sync-safety.md).
 
 ---
 
+## Pembaruan 2026-09-15: sync C300 dengan tabel nama kosong
+
+- Enumerasi SNMP sebelumnya hanya memakai tabel nama. Bila tabel nama kosong
+  tetapi serial konfigurasi tersedia, sync sekarang memakai indeks serial
+  sebagai fallback. Tabel status tetap tidak menjadi sumber inventori karena
+  bisa menyimpan ONU lama. Perilaku tabel nama yang tersedia tetap dipertahankan.
+- Respons NoSuchInstance/NoSuchObject/EndOfMibView dan OID di luar subtree
+  tidak menjadi baris ONU. Jika nama/serial kosong, walk optik opsional dilewati
+  agar profil alternatif dapat segera dicoba.
+- Error serial dan error profil v2.1 tidak lagi disamarkan sebagai dua profil
+  kosong. Inventori kosong tanpa error jaringan tidak dilabeli OLT unreachable;
+  pesan mengarahkan pemeriksaan registrasi ONU, SNMP view/community, dan OID.
+- Tes fixture kedua profil mencakup serial-only, serial hex ASCII, tabel nama
+  normal, status-only, respons unsupported, dan kegagalan serial/profil.
+
+Batas verifikasi: belum ada hasil walk dari C300 pengguna. Fallback ini hanya
+menangani serial yang tersedia di OID profil existing, bukan menjamin semua
+firmware C300 kompatibel. Jika tetap kosong, periksa hasil Tes SNMP/sysDescr,
+versi firmware, dan jumlah ONU terdaftar sebelum menambah profil OID baru.
+Jangan kirim community, password SNMPv3, atau kredensial CLI dalam laporan.
+
 ## Pembaruan 2026-09-15: pisahkan detail dan popup trafik ONU
 
 - Expand detail hanya memuat detail/config ONU, tanpa polling, grafik, atau

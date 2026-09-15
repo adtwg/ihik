@@ -211,6 +211,10 @@ type walkResult struct {
 // profil OID sesuai firmware OLT. Walk sekuensial per-OID.
 // Fallback: jika primary OID gagal, coba alt OID dalam profil.
 func WalkONUs(ctx context.Context, session *gosnmp.GoSNMP, profile *FirmwareProfile) ([]ONU, error) {
+	return walkONUs(ctx, session.Walk, profile)
+}
+
+func walkONUs(ctx context.Context, walk func(string, gosnmp.WalkFunc) error, profile *FirmwareProfile) ([]ONU, error) {
 	addOID := func(suffix string) string {
 		if suffix == "" {
 			return ""
@@ -239,16 +243,20 @@ func WalkONUs(ctx context.Context, session *gosnmp.GoSNMP, profile *FirmwareProf
 		if oid == "" {
 			return values, nil
 		}
-		err := session.Walk(oid, func(pdu gosnmp.SnmpPDU) error {
+		if err := ctx.Err(); err != nil {
+			return values, err
+		}
+		err := walk(oid, func(pdu gosnmp.SnmpPDU) error {
 			// gosnmp mengembalikan nama OID dengan titik depan (".1.3.6..."),
 			// sedangkan root tanpa titik — normalisasi dulu supaya suffix
 			// (mis. "285278465.1") benar-benar terpotong. Tanpa ini key
 			// tersimpan sebagai OID penuh dan merge antar-tabel gagal.
 			name := strings.TrimPrefix(pdu.Name, ".")
-			key := strings.TrimPrefix(name, oid+".")
-			if key == name {
-				key = strings.TrimPrefix(key, ".")
+			root := strings.TrimPrefix(oid, ".") + "."
+			if !strings.HasPrefix(name, root) || pdu.Type == gosnmp.NoSuchInstance || pdu.Type == gosnmp.NoSuchObject || pdu.Type == gosnmp.EndOfMibView {
+				return nil
 			}
+			key := strings.TrimPrefix(name, root)
 			values[key] = pduValue(pdu)
 			return nil
 		})
@@ -271,13 +279,32 @@ func WalkONUs(ctx context.Context, session *gosnmp.GoSNMP, profile *FirmwareProf
 
 	// Serial: non-fatal (beberapa firmware timeout/empty di OID utama),
 	// fallback ke hex variant bila hasilnya kosong.
-	serial, _ := walkOne(oidSerial)
+	serial, serialErr := walkOne(oidSerial)
+	var hexErr error
 	if oidSerialHex != "" {
-		hexMap, _ := walkOne(oidSerialHex)
+		var hexMap map[string]string
+		hexMap, hexErr = walkOne(oidSerialHex)
 		for idx, val := range hexMap {
 			if serial[idx] == "" && val != "" {
 				serial[idx] = decodeHexSerial(val)
 			}
+		}
+	}
+
+	if len(name) == 0 {
+		for index, value := range serial {
+			if strings.TrimSpace(cleanSerial(value)) != "" {
+				name[index] = ""
+			}
+		}
+		if len(name) == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if serialErr != nil || hexErr != nil {
+				return nil, fmt.Errorf("tabel nama kosong; snmp walk serial %s: %v; serial alternatif %s: %v", oidSerial, serialErr, oidSerialHex, hexErr)
+			}
+			return nil, nil
 		}
 	}
 
@@ -342,8 +369,8 @@ func WalkONUs(ctx context.Context, session *gosnmp.GoSNMP, profile *FirmwareProf
 		}
 	}
 
-	// Sumber daftar ONU = tabel konfigurasi (name) SAJA (hindari entri
-	// hantu dari tabel status yang menyimpan baris ONU lama).
+	// Sumber daftar ONU = name, atau serial konfigurasi bila name kosong.
+	// Tabel status tidak digunakan untuk enumerasi (bisa berisi ONU lama).
 	// Pencocokan lintas tabel memakai lokasi logis (slot,port,onuId)
 	// karena tiap tabel ZTE memakai format key berbeda (debug-walk
 	// produksi 2026-08-29):

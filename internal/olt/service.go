@@ -506,15 +506,19 @@ func (service *Service) detectBestProfile(ctx context.Context, session *gosnmp.G
 	s21 := score(p21, onus21, err21)
 
 	if s22 < 0 && s21 < 0 {
-		if err22 != nil {
-			return nil, nil, fmt.Errorf("%w: v2.2=%v, v2.1=%v", ErrUnreachable, err22, err21)
-		}
-		return nil, nil, fmt.Errorf("%w: v2.2 & v2.1 keduanya kosong", ErrUnreachable)
+		return nil, nil, profileDetectionError(err22, err21)
 	}
 	if s22 >= s21 {
 		return p22, onus22, nil
 	}
 	return p21, onus21, nil
+}
+
+func profileDetectionError(err22, err21 error) error {
+	if err22 != nil || err21 != nil {
+		return fmt.Errorf("%w: v2.2=%v, v2.1=%v", ErrUnreachable, err22, err21)
+	}
+	return fmt.Errorf("tabel konfigurasi ONU SNMP kosong pada profil v2.2 (.3902.1082) dan v2.1 (.3902.1012); bukan bukti OLT offline. Periksa ONU terdaftar, akses SNMP view/community, dan kecocokan OID firmware C300/C320")
 }
 
 func sampleRawOptical(ctx context.Context, session *gosnmp.GoSNMP, profile *zte.FirmwareProfile, onus []zte.ONU) {

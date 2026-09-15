@@ -2,12 +2,27 @@ package olt
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"isp-billing/internal/zte"
 )
+
+func TestProfileDetectionError(t *testing.T) {
+	err := profileDetectionError(nil, nil)
+	if errors.Is(err, ErrUnreachable) || !strings.Contains(err.Error(), "SNMP view/community") {
+		t.Fatalf("empty inventory must not imply device unreachable: %v", err)
+	}
+	for _, failures := range [][2]error{{errors.New("v22 timeout"), nil}, {nil, errors.New("v21 timeout")}} {
+		err = profileDetectionError(failures[0], failures[1])
+		if !errors.Is(err, ErrUnreachable) || !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("profile failure was hidden: %v", err)
+		}
+	}
+}
 
 type cancellationRepository struct {
 	Repository
