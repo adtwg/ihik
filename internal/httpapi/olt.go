@@ -819,9 +819,10 @@ func (server *server) onuDetailCLI(response http.ResponseWriter, request *http.R
 	q := request.URL.Query()
 	pon := q.Get("pon")
 	onuID, _ := strconv.Atoi(q.Get("onu_id"))
+	onuIndex := strings.TrimSpace(q.Get("index"))
 	forceCLI := q.Get("force_cli") == "1" || q.Get("force_cli") == "true"
-	if pon == "" || onuID < 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Query pon dan onu_id wajib diisi.")
+	if (pon == "" || onuID < 1) && onuIndex == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Query pon dan onu_id (atau index) wajib diisi.")
 		return
 	}
 	// Jalur default SNMP cepat (~15s). forceCLI menjalankan 8 perintah CLI
@@ -832,7 +833,7 @@ func (server *server) onuDetailCLI(response http.ResponseWriter, request *http.R
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), timeout)
 	defer cancel()
-	sample, raws, err := server.olts.GetONUConfigDetail(ctx, tenantID, request.PathValue("oltID"), pon, onuID, forceCLI)
+	sample, raws, err := server.olts.GetONUConfigDetail(ctx, tenantID, request.PathValue("oltID"), onuIndex, pon, onuID, forceCLI)
 	if err != nil {
 		log.Printf("[onuDetailCLI] olt=%s pon=%s onu=%d error=%v", request.PathValue("oltID"), pon, onuID, err)
 		oltErrorResponseWithContext(response, err, "onu-detail-cli", request.PathValue("oltID"))

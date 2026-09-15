@@ -694,17 +694,32 @@ func (service *Service) DeleteONUHybrid(ctx context.Context, tenantID, id, index
 // GetONUConfigDetail mengambil detail ONU via SNMP terlebih dahulu.
 // Data deep (tcont/gemport/service-port) hanya dari CLI dan tidak diisi di sini
 // karena CLI serial/berat. Fallback ke CLI hanya jika SNMP tidak mengembalikan data.
-func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, pon string, onuID int, forceCLI bool) (*ONUConfigDetail, map[string]string, error) {
-	p, oid, ok := resolveONURef("", pon, onuID)
-	if !ok {
-		return nil, nil, ErrInvalidInput
+func (service *Service) GetONUConfigDetail(ctx context.Context, tenantID, id, index, pon string, onuID int, forceCLI bool) (*ONUConfigDetail, map[string]string, error) {
+	// Index asli dari FE = otoritatif: decode pon/onuID langsung darinya agar
+	// tidak bergantung label onu_number DB yang bisa basi/duplikat.
+	p, oid := "", 0
+	if isRealSNMPIndex(index) {
+		if pp, id2, ok := splitIndex(index); ok {
+			p, oid = pp, id2
+		}
+	}
+	if p == "" {
+		var ok bool
+		p, oid, ok = resolveONURef("", pon, onuID)
+		if !ok {
+			return nil, nil, ErrInvalidInput
+		}
 	}
 
 	onuNumber := fmt.Sprintf("%s:%d", p, oid)
 
 	// Kunci cache = index SNMP asli (kolom olt_onus.index); onuNumber hanya fallback.
-	realIndex, _ := service.repository.FindONUIndexByRef(ctx, tenantID, id, p, oid)
-	cacheKey := strings.TrimSpace(realIndex)
+	realIndex := strings.TrimSpace(index)
+	if !isRealSNMPIndex(realIndex) {
+		realIndex, _ = service.repository.FindONUIndexByRef(ctx, tenantID, id, p, oid)
+		realIndex = strings.TrimSpace(realIndex)
+	}
+	cacheKey := realIndex
 	if cacheKey == "" {
 		cacheKey = onuNumber
 	}

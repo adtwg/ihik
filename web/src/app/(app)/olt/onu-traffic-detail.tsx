@@ -292,6 +292,8 @@ export function OnuTrafficDetail({
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const q = new URLSearchParams({ pon: ref.pon, onu_id: String(ref.onuID) });
+      // Index asli baris = otoritatif di backend (kebal label onu_number basi).
+      if (onu.index) q.set("index", onu.index);
       if (forceCLI) q.set("force_cli", "1");
       const res = await clientAPI<DetailResp>(`/api/v1/olts/${olt.id}/onu-detail-cli?${q.toString()}`, { signal: controller.signal });
       const sample = res.sample ?? null;
@@ -327,7 +329,7 @@ export function OnuTrafficDetail({
       clearTimeout(timer);
       if (!silent) setDetailEnriching(false);
     }
-  }, [olt.id, onu.description, onu.distance_m, onu.name, onu.rx_power_dbm, onu.serial_number, onu.status, onu.tx_power_dbm, onLiveDetail, ref]);
+  }, [olt.id, onu.description, onu.distance_m, onu.index, onu.name, onu.rx_power_dbm, onu.serial_number, onu.status, onu.tx_power_dbm, onLiveDetail, ref]);
 
   useEffect(() => {
     // Snapshot detail ringan saat expand: data dasar + cache jika sudah tersedia.
