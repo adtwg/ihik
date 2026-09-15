@@ -809,6 +809,10 @@ func (server *server) oltDebugWalk(response http.ResponseWriter, request *http.R
 	writeJSON(response, http.StatusOK, result)
 }
 
+// detailInFlight menolak request detail duplikat per-ONU selagi satu masih
+// berjalan — melindungi OLT dari klien yang refetch beruntun (loop/bundle lama).
+var detailInFlight sync.Map
+
 // onuDetailCLI: detail konfigurasi ONU via SNMP, fallback CLI.
 // Query: ?pon=1/1/1&onu_id=1
 func (server *server) onuDetailCLI(response http.ResponseWriter, request *http.Request) {
@@ -825,6 +829,12 @@ func (server *server) onuDetailCLI(response http.ResponseWriter, request *http.R
 		writeError(response, http.StatusBadRequest, "invalid_request", "Query pon dan onu_id (atau index) wajib diisi.")
 		return
 	}
+	guardKey := tenantID + "/" + request.PathValue("oltID") + "/" + onuIndex + "/" + pon + ":" + strconv.Itoa(onuID)
+	if _, running := detailInFlight.LoadOrStore(guardKey, true); running {
+		writeError(response, http.StatusTooManyRequests, "detail_in_flight", "Detail ONU ini sedang diambil; coba lagi sebentar.")
+		return
+	}
+	defer detailInFlight.Delete(guardKey)
 	// Jalur default SNMP cepat (~15s). forceCLI menjalankan 8 perintah CLI
 	// berurutan sehingga butuh timeout lebih longgar agar tidak ter-cancel.
 	timeout := 15 * time.Second
