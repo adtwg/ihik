@@ -179,14 +179,41 @@ func GetSystem(session *gosnmp.GoSNMP) (SystemInfo, error) {
 	if err != nil {
 		return SystemInfo{}, fmt.Errorf("snmp get: %w", err)
 	}
+	return parseSystemResponse(result)
+}
+
+func parseSystemResponse(result *gosnmp.SnmpPacket) (SystemInfo, error) {
+	if result == nil {
+		return SystemInfo{}, fmt.Errorf("SNMP tidak mengembalikan paket respons system")
+	}
+	if result.Error != gosnmp.NoError {
+		return SystemInfo{}, fmt.Errorf("SNMP system ditolak/gagal: %v (error-index %d); periksa versi SNMP, view/community, dan ACL sumber VPS", result.Error, result.ErrorIndex)
+	}
 	var info SystemInfo
 	for _, v := range result.Variables {
-		switch v.Type {
-		case gosnmp.OctetString:
-			info.SysDescr = string(v.Value.([]byte))
-		case gosnmp.TimeTicks:
-			info.SysUpTime = formatUptime(gosnmp.ToBigInt(v.Value).Uint64())
+		switch strings.TrimPrefix(v.Name, ".") {
+		case oidSysDescr:
+			if value, ok := v.Value.([]byte); ok && v.Type == gosnmp.OctetString {
+				info.SysDescr = strings.TrimSpace(string(value))
+			}
+		case oidSysUpTime:
+			if v.Type == gosnmp.TimeTicks && v.Value != nil {
+				value := gosnmp.ToBigInt(v.Value)
+				if value.IsUint64() && value.Uint64() <= 0xffffffff {
+					info.SysUpTime = formatUptime(value.Uint64())
+				}
+			}
 		}
+	}
+	var missing []string
+	if info.SysDescr == "" {
+		missing = append(missing, "sysDescr ("+oidSysDescr+")")
+	}
+	if info.SysUpTime == "" {
+		missing = append(missing, "sysUpTime ("+oidSysUpTime+")")
+	}
+	if len(missing) > 0 {
+		return SystemInfo{}, fmt.Errorf("respons SNMP diterima tetapi %s kosong/tidak valid; identitas OLT belum terverifikasi. Periksa IP/port tujuan, versi SNMP, dan akses view/community dari VPS", strings.Join(missing, " dan "))
 	}
 	upper := strings.ToUpper(info.SysDescr)
 	switch {

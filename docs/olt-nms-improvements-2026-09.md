@@ -9,6 +9,24 @@ Keamanan edit/sync: lihat [olt-edit-sync-safety.md](olt-edit-sync-safety.md).
 
 ---
 
+## Pembaruan 2026-09-16: validasi Tes SNMP system
+
+- GetSystem sebelumnya menerima paket kosong/NoSuchObject sebagai sukses,
+  sehingga UI bisa menulis tersambung tanpa model maupun uptime.
+- Tes sekarang memeriksa packet error, OID sysDescr/sysUpTime yang tepat,
+  tipe nilai, deskripsi tidak kosong, dan uptime TimeTicks valid. Uptime nol
+  tetap valid. Model yang tidak dikenal tetap boleh lolos bila kedua OID valid.
+- Respons parsial/kosong menjadi error berisi OID yang belum terbaca dan
+  arahan pemeriksaan IP/port, versi SNMP, akses view/community dan ACL VPS.
+- Tes mencakup C300/C320, model unknown, uptime nol, packet nil/kosong,
+  AuthorizationError, NoSuchObject, OID/tipe salah, dan data parsial.
+
+Ini memperbaiki sukses palsu pada Tes SNMP, bukan membuktikan penyebab sync
+C300 produksi. Diagnosis berikutnya memerlukan hasil baca dari VPS terhadap
+sysDescr 1.3.6.1.2.1.1.1.0 dan sysUpTime 1.3.6.1.2.1.1.3.0, versi firmware,
+serta konfirmasi ONU terdaftar. Jangan kirim community/password atau membuka
+SNMP ke internet; periksa izin baca dari alamat sumber VPS yang benar.
+
 ## Pembaruan 2026-09-15: sync C300 dengan tabel nama kosong
 
 - Enumerasi SNMP sebelumnya hanya memakai tabel nama. Bila tabel nama kosong

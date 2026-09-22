@@ -3,10 +3,67 @@ package zte
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/gosnmp/gosnmp"
 )
+
+func TestParseSystemResponse(t *testing.T) {
+	valid := func() *gosnmp.SnmpPacket {
+		return &gosnmp.SnmpPacket{Variables: []gosnmp.SnmpPDU{
+			{Name: "." + oidSysUpTime, Type: gosnmp.TimeTicks, Value: uint32(0)},
+			{Name: oidSysDescr, Type: gosnmp.OctetString, Value: []byte("ZTE ZXA10 C300 V2.1.0")},
+		}}
+	}
+	for _, scenario := range []string{"C300", "C320", "unknown model", "empty", "nil", "denied", "unsupported", "partial", "wrong OIDs", "wrong types", "blank description", "invalid value"} {
+		t.Run(scenario, func(t *testing.T) {
+			packet := valid()
+			switch scenario {
+			case "C320":
+				packet.Variables[1].Value = []byte("ZTE C320")
+			case "unknown model":
+				packet.Variables[1].Value = []byte("SNMP agent")
+			case "empty":
+				packet.Variables = nil
+			case "nil":
+				packet = nil
+			case "denied":
+				packet.Error = gosnmp.AuthorizationError
+			case "unsupported":
+				for index := range packet.Variables {
+					packet.Variables[index].Type = gosnmp.NoSuchObject
+					packet.Variables[index].Value = nil
+				}
+			case "partial":
+				packet.Variables = packet.Variables[:1]
+			case "wrong OIDs":
+				for index := range packet.Variables {
+					packet.Variables[index].Name += ".99"
+				}
+			case "wrong types":
+				packet.Variables[0].Type = gosnmp.Counter32
+			case "blank description":
+				packet.Variables[1].Value = []byte("  ")
+			case "invalid value":
+				packet.Variables[1].Value = 123
+			}
+			info, err := parseSystemResponse(packet)
+			wantSuccess := scenario == "C300" || scenario == "C320" || scenario == "unknown model"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("info=%+v error=%v, wantSuccess=%v", info, err, wantSuccess)
+			}
+			if wantSuccess {
+				if info.SysUpTime == "" || (scenario != "unknown model" && !strings.Contains(info.ModelHint, scenario)) {
+					t.Fatalf("invalid system info: %+v", info)
+				}
+				if scenario == "unknown model" && info.ModelHint != "" {
+					t.Fatalf("invented model: %s", info.ModelHint)
+				}
+			}
+		})
+	}
+}
 
 func TestWalkONUsConfigurationInventory(t *testing.T) {
 	for _, profileName := range []string{"v2.1", "v2.2"} {
